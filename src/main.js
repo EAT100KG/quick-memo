@@ -289,9 +289,6 @@ function renderHeader() {
         <button class="ghost-btn" id="btn-win-dock-right" title="将窗口贴靠并缩到屏幕右侧外，鼠标移到桌面右边缘或按 Alt+Space 即可滑出">
           ⇥ 缩到屏幕外
         </button>
-        <button class="ghost-btn" id="btn-win-hide" title="隐藏到系统托盘后台运行（按 Alt+Space 随时呼出，或按 Esc）">
-          ➖ 隐藏后台
-        </button>
         <button class="ghost-btn" id="btn-open-vault-folder" title="在 Windows 资源管理器中打开本地 Markdown 文件夹">
           📂 打开本地库
         </button>
@@ -798,11 +795,6 @@ function bindEvents() {
   const btnWinDock = document.getElementById('btn-win-dock-right');
   if (btnWinDock) {
     btnWinDock.addEventListener('click', () => Bridge.sendWindowCommand('dock-right'));
-  }
-
-  const btnWinHide = document.getElementById('btn-win-hide');
-  if (btnWinHide) {
-    btnWinHide.addEventListener('click', () => Bridge.sendWindowCommand('hide'));
   }
 
   const btnJumpCfg = document.getElementById('btn-jump-llm-cfg');
