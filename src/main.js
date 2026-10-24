@@ -413,9 +413,6 @@ function renderHeader() {
         <button class="ghost-btn" id="btn-win-dock-right" title="将窗口贴靠并缩到屏幕右侧外，鼠标移到桌面右边缘或按 Alt+Space 即可滑出">
           ⇥ 缩到屏幕外
         </button>
-        <button class="ghost-btn" id="btn-topbar-export-zip" title="一键将本地 Markdown 仓库所有文件打包为 .zip 压缩包并打开所在文件夹" ${state.exportingZip ? 'disabled' : ''}>
-          📦 ${state.exportingZip ? '打包中...' : '一键打包迁移'}
-        </button>
         <button class="ghost-btn" id="btn-open-vault-folder" title="在 Windows 资源管理器中打开本地 Markdown 文件夹">
           📂 打开本地库
         </button>
@@ -1798,11 +1795,6 @@ function bindEvents() {
   }
 
   // 设置页事件
-  const btnTopbarExportZip = document.getElementById('btn-topbar-export-zip');
-  if (btnTopbarExportZip) {
-    btnTopbarExportZip.addEventListener('click', handleExportVaultZip);
-  }
-
   const btnExportZip = document.getElementById('btn-export-vault-zip');
   if (btnExportZip) {
     btnExportZip.addEventListener('click', handleExportVaultZip);

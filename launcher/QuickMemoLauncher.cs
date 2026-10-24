@@ -344,6 +344,8 @@ namespace QuickMemo
         private bool _wasWindowAlive = false;
 
         // 贴边与快捷键展开状态控制
+        private const int MIN_WINDOW_WIDTH = 900;
+        private const int MIN_WINDOW_HEIGHT = 620;
         private DockEdge _dockEdge = DockEdge.None;
         private bool _isCollapsedOutside = false;
         private bool _isPinnedTopMost = false;
@@ -698,8 +700,8 @@ namespace QuickMemo
             if (GetWindowRect(hwnd, out r))
             {
                 Screen scr = Screen.FromHandle(hwnd);
-                int w = Math.Min(Math.Max(r.Width, 520), 960);
-                int h = Math.Min(Math.Max(r.Height, 540), scr.WorkingArea.Height - 40);
+                int w = Math.Min(Math.Max(r.Width, MIN_WINDOW_WIDTH), 1080);
+                int h = Math.Min(Math.Max(r.Height, MIN_WINDOW_HEIGHT), scr.WorkingArea.Height - 40);
                 int x = scr.WorkingArea.Right - w;
                 int y = Math.Max(scr.WorkingArea.Top + 20, Math.Min(r.Top, scr.WorkingArea.Bottom - h - 20));
                 _expandedBounds = new Rectangle(x, y, w, h);
@@ -864,29 +866,48 @@ namespace QuickMemo
             }
 
             // 仅当用户刚刚用鼠标把窗口主动往屏幕右/左边缘外面推（超出屏幕边界 60px 以上）并松开鼠标时，才自动缩成侧边磨砂小标签！
-            // 平时打开微信、切换焦点或鼠标移开，窗口绝不会自己退回后台！
-            if (_wasMouseDragging)
+            // 同时强制保障窗口最小宽度 (900px) 与最小高度 (620px)，防止界面被挤压变形！
+            RECT curRect;
+            if (GetWindowRect(hwnd, out curRect))
             {
-                _wasMouseDragging = false;
-                RECT rect;
-                if (GetWindowRect(hwnd, out rect))
+                Rectangle winRect = curRect.ToRectangle();
+                Screen currentScreen = Screen.FromRectangle(winRect);
+                Rectangle screenBounds = currentScreen.WorkingArea;
+
+                int clampedW = Math.Max(winRect.Width, MIN_WINDOW_WIDTH);
+                int clampedH = Math.Max(winRect.Height, MIN_WINDOW_HEIGHT);
+
+                if (_wasMouseDragging)
                 {
-                    Rectangle winRect = rect.ToRectangle();
-                    Screen currentScreen = Screen.FromRectangle(winRect);
-                    Rectangle screenBounds = currentScreen.WorkingArea;
+                    _wasMouseDragging = false;
 
                     if (winRect.Right > screenBounds.Right + 60)
                     {
                         _dockEdge = DockEdge.Right;
-                        _expandedBounds = new Rectangle(screenBounds.Right - winRect.Width - 12, Math.Max(screenBounds.Top + 20, winRect.Top), winRect.Width, winRect.Height);
+                        _expandedBounds = new Rectangle(screenBounds.Right - clampedW - 12, Math.Max(screenBounds.Top + 20, winRect.Top), clampedW, clampedH);
                         CollapseToOutside();
+                        return;
                     }
                     else if (winRect.Left < screenBounds.Left - 60)
                     {
                         _dockEdge = DockEdge.Left;
-                        _expandedBounds = new Rectangle(screenBounds.Left + 12, Math.Max(screenBounds.Top + 20, winRect.Top), winRect.Width, winRect.Height);
+                        _expandedBounds = new Rectangle(screenBounds.Left + 12, Math.Max(screenBounds.Top + 20, winRect.Top), clampedW, clampedH);
                         CollapseToOutside();
+                        return;
                     }
+                }
+
+                if (winRect.Width < MIN_WINDOW_WIDTH || winRect.Height < MIN_WINDOW_HEIGHT)
+                {
+                    SetWindowPos(
+                        hwnd,
+                        _isPinnedTopMost ? new IntPtr(-1) : HWND_NOTOPMOST,
+                        winRect.Left,
+                        winRect.Top,
+                        clampedW,
+                        clampedH,
+                        SWP_NOACTIVATE | SWP_SHOWWINDOW
+                    );
                 }
             }
         }

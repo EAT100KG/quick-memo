@@ -39,6 +39,8 @@ body {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  min-width: 860px;
+  min-height: 560px;
 }
 
 /* 顶部导航栏 */
@@ -49,9 +51,11 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   padding: 0 20px;
   flex-shrink: 0;
   user-select: none;
+  white-space: nowrap;
 }
 
 .brand {
@@ -59,6 +63,8 @@ body {
   align-items: center;
   gap: 10px;
   cursor: pointer;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .brand-logo-img {
@@ -88,6 +94,8 @@ body {
   background: var(--bg-subtle);
   padding: 4px;
   border-radius: 10px;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .nav-tab {
@@ -103,6 +111,8 @@ body {
   align-items: center;
   gap: 6px;
   transition: all 0.15s ease;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .nav-tab:hover {
@@ -151,6 +161,8 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .ghost-btn, .tool-btn {
@@ -166,6 +178,8 @@ body {
   align-items: center;
   gap: 5px;
   transition: all 0.15s;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .ghost-btn:hover, .tool-btn:hover {
