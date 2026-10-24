@@ -2142,6 +2142,22 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
+// 点击聊天面板外部空白处自动收起寻物助手
+document.addEventListener('mousedown', (e) => {
+  if (!state.chatOpen) return;
+  const target = e.target;
+  if (!(target instanceof Element)) return;
+  if (
+    target.closest('#chat-panel') ||
+    target.closest('#btn-toggle-chat-bubble') ||
+    target.closest('#pdf-modal-backdrop')
+  ) {
+    return;
+  }
+  state.chatOpen = false;
+  render();
+});
+
 window.addEventListener('focus', () => {
   if (state.activeTab === 'capture') {
     focusCaptureInput();
