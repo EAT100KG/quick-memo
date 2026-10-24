@@ -444,6 +444,42 @@ body {
   gap: 6px;
 }
 
+.toast-warn-line {
+  width: 100%;
+  font-size: 12px;
+  color: #b45309;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  padding: 6px 10px;
+  border-radius: 6px;
+  margin-top: 4px;
+}
+
+.llm-test-bar {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border-color);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.llm-test-status {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.llm-test-status.ok {
+  color: #047857;
+  font-weight: 600;
+}
+
+.llm-test-status.err {
+  color: var(--danger);
+  font-weight: 500;
+}
+
 .mini-btn {
   border: 1px solid var(--border-color);
   background: #fff;

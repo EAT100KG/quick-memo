@@ -11,7 +11,7 @@ import {
   renameAttachment,
   openInExplorer
 } from './server/vault-manager.js';
-import { classifyWithLLM, heuristicClassify } from './server/llm-classifier.js';
+import { classifyWithLLM, heuristicClassify, testLlmConnection } from './server/llm-classifier.js';
 
 function readJsonBody(req) {
   return new Promise((resolve, reject) => {
@@ -80,42 +80,45 @@ function quickMemoLocalServerPlugin() {
           if (url.pathname === '/api/memos' && req.method === 'GET') {
             return sendJson(res, 200, listMemos());
           }
+          if (url.pathname === '/api/llm/test' && req.method === 'POST') {
+            const body = await readJsonBody(req);
+            const result = await testLlmConnection(body.llm);
+            return sendJson(res, 200, result);
+          }
           if (url.pathname === '/api/memos/quick-save' && req.method === 'POST') {
-            // 第一步：先用启发式规则秒存落盘（零等待），再返回或异步 AI 分类
             const body = await readJsonBody(req);
             const config = getConfig();
-            const attachmentsMeta = (body.rawAttachments || []).map((a) => ({
-              name: a.name,
-              mimeType: a.mimeType
-            }));
+            const rawAttachments = body.rawAttachments || [];
 
             let classification;
             if (body.manualCategory) {
               const heur = heuristicClassify({
                 content: body.content,
-                attachments: attachmentsMeta,
+                attachments: rawAttachments,
                 categories: config.categories
               });
               classification = {
                 ...heur,
                 category: body.manualCategory
               };
-            } else if (body.syncAi !== false) {
+            } else {
               classification = await classifyWithLLM({
                 content: body.content,
-                attachments: attachmentsMeta
-              });
-            } else {
-              classification = heuristicClassify({
-                content: body.content,
-                attachments: attachmentsMeta,
-                categories: config.categories
+                attachments: rawAttachments
               });
             }
 
+            const renamedRawAttachments = rawAttachments.map((att, idx) => ({
+              ...att,
+              name: (classification.renamedFiles && classification.renamedFiles[idx]) || att.name
+            }));
+
+            const autoContent = (body.content || '').trim() ||
+              (classification.extractedPreview ? `### 📄 文档内容提取预览\n\n${classification.extractedPreview}` : '');
+
             const saved = saveMemo({
-              content: body.content,
-              rawAttachments: body.rawAttachments || [],
+              content: autoContent,
+              rawAttachments: renamedRawAttachments,
               category: body.manualCategory || classification.category,
               title: body.manualTitle || classification.title,
               summary: classification.summary,

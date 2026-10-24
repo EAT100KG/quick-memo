@@ -316,5 +316,12 @@ export const Bridge = {
       method: 'POST',
       body: JSON.stringify({ cmd })
     });
+  },
+
+  async testLlmConnection(llm) {
+    return apiRequest('/api/llm/test', {
+      method: 'POST',
+      body: JSON.stringify({ llm })
+    });
   }
 };

@@ -14,7 +14,7 @@ import {
   renameAttachment,
   openInExplorer
 } from './vault-manager.js';
-import { classifyWithLLM, heuristicClassify } from './llm-classifier.js';
+import { classifyWithLLM, heuristicClassify, testLlmConnection } from './llm-classifier.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -147,31 +147,42 @@ export function startStandaloneServer(port = 1420, openWindow = false) {
         if (url.pathname === '/api/memos' && req.method === 'GET') {
           return sendJson(res, 200, listMemos());
         }
+        if (url.pathname === '/api/llm/test' && req.method === 'POST') {
+          const body = await readJsonBody(req);
+          const result = await testLlmConnection(body.llm);
+          return sendJson(res, 200, result);
+        }
         if (url.pathname === '/api/memos/quick-save' && req.method === 'POST') {
           const body = await readJsonBody(req);
           const config = getConfig();
-          const attachmentsMeta = (body.rawAttachments || []).map((a) => ({
-            name: a.name,
-            mimeType: a.mimeType
-          }));
+          const rawAttachments = body.rawAttachments || [];
 
           const classification = body.manualCategory
             ? {
                 ...heuristicClassify({
                   content: body.content,
-                  attachments: attachmentsMeta,
+                  attachments: rawAttachments,
                   categories: config.categories
                 }),
                 category: body.manualCategory
               }
             : await classifyWithLLM({
                 content: body.content,
-                attachments: attachmentsMeta
+                attachments: rawAttachments
               });
 
+          // 自动用 AI 或文档内容提取器生成的清晰文件名重命名上传的附件
+          const renamedRawAttachments = rawAttachments.map((att, idx) => ({
+            ...att,
+            name: (classification.renamedFiles && classification.renamedFiles[idx]) || att.name
+          }));
+
+          const autoContent = (body.content || '').trim() ||
+            (classification.extractedPreview ? `### 📄 文档内容提取预览\n\n${classification.extractedPreview}` : '');
+
           const saved = saveMemo({
-            content: body.content,
-            rawAttachments: body.rawAttachments || [],
+            content: autoContent,
+            rawAttachments: renamedRawAttachments,
             category: body.manualCategory || classification.category,
             title: body.manualTitle || classification.title,
             summary: classification.summary,
@@ -190,9 +201,26 @@ export function startStandaloneServer(port = 1420, openWindow = false) {
             content: target.content,
             attachments: target.attachments || []
           });
+
+          // 如果包含附件且自动生成了更有意义的文件名，同步重命名磁盘上的附件
+          if (Array.isArray(target.attachments) && Array.isArray(classification.renamedFiles)) {
+            for (let i = 0; i < target.attachments.length; i++) {
+              const newFileName = classification.renamedFiles[i];
+              if (newFileName && newFileName !== target.attachments[i].name) {
+                try {
+                  renameAttachment(target.id, i, newFileName);
+                } catch {}
+              }
+            }
+          }
+
+          const nextContent = (target.content || '').trim() ||
+            (classification.extractedPreview ? `### 📄 文档内容提取预览\n\n${classification.extractedPreview}` : '');
+
           const updated = updateMemo(target.id, {
             category: classification.category,
             title: classification.title,
+            content: nextContent,
             summary: classification.summary,
             tags: classification.tags,
             aiClassified: classification.aiClassified

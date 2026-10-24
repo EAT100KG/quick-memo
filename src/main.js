@@ -2,9 +2,9 @@ import { Bridge } from './bridge.js';
 
 const LLM_PRESETS = {
   deepseek: {
-    label: 'DeepSeek (推荐·高性价比)',
-    baseUrl: 'https://api.deepseek.com/v1',
-    model: 'deepseek-chat'
+    label: 'DeepSeek (V4.1 Flash / Pro)',
+    baseUrl: 'https://api.deepseek.com',
+    model: 'deepseek-flash'
   },
   siliconflow: {
     label: '硅基流动 SiliconFlow',
@@ -15,6 +15,11 @@ const LLM_PRESETS = {
     label: '阿里云·通义千问',
     baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
     model: 'qwen-plus'
+  },
+  volcengine: {
+    label: '火山引擎·豆包 Ark',
+    baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+    model: 'doubao-1-5-pro-32k-250115'
   },
   openai: {
     label: 'OpenAI 官方/中转',
@@ -359,6 +364,9 @@ function renderCaptureView() {
 
 function renderLastSavedToast(toast) {
   const { memo, classification } = toast;
+  const renamedList = (memo.attachments || []).map((a) => a.name).filter(Boolean);
+  const errWarn = classification?.errorWarning || '';
+
   return `
     <div class="saved-toast">
       <div class="toast-main">
@@ -366,12 +374,18 @@ function renderLastSavedToast(toast) {
         <strong>${escapeHtml(memo.title)}</strong>
         <span class="toast-arrow">→</span>
         <span class="cat-pill">📂 ${escapeHtml(memo.category)}</span>
+        ${renamedList.length > 0 ? `<span class="cat-pill">📎 文件已重命名：${escapeHtml(renamedList.join('、'))}</span>` : ''}
         ${(memo.tags || []).map((t) => `<span class="tag-pill">#${escapeHtml(t)}</span>`).join('')}
       </div>
       <div class="toast-actions">
         <button class="mini-btn" data-open-md="${escapeHtml(memo.mdAbsPath)}">在文件夹中定位</button>
         <button class="mini-btn" data-inspect-memo="${escapeHtml(memo.id)}">查看详情</button>
       </div>
+      ${errWarn ? `
+        <div class="toast-warn-line">
+          ⚠️ LLM 接口返回异常（已自动提取文档内部标题完成重命名与归档）：<code>${escapeHtml(errWarn)}</code>
+        </div>
+      ` : ''}
     </div>
   `;
 }
@@ -633,6 +647,11 @@ function renderSettingsView() {
             <span>补充分类偏好提示词（可选，告诉 AI 你的特殊归类习惯）</span>
             <input type="text" id="cfg-llm-prompt" value="${escapeHtml(llm.customSystemPrompt || '')}" placeholder="例如：凡是涉及股票代码的归入工作与待办；提示词模板归入技术与代码..." />
           </label>
+        </div>
+
+        <div class="llm-test-bar">
+          <button class="tool-btn" id="btn-test-llm">🔌 测试 OpenAI 兼容接口连接</button>
+          <span id="llm-test-status" class="llm-test-status"></span>
         </div>
       </section>
 
@@ -1065,6 +1084,41 @@ function bindEvents() {
     btnOpenVaultSettings.addEventListener('click', () => {
       const val = document.getElementById('cfg-vault-path')?.value;
       Bridge.openInExplorer(val);
+    });
+  }
+
+  const btnTestLlm = document.getElementById('btn-test-llm');
+  if (btnTestLlm) {
+    btnTestLlm.addEventListener('click', async () => {
+      const statusEl = document.getElementById('llm-test-status');
+      const baseUrl = document.getElementById('cfg-llm-baseurl')?.value.trim() || '';
+      const apiKey = document.getElementById('cfg-llm-apikey')?.value.trim() || '';
+      const model = document.getElementById('cfg-llm-model')?.value.trim() || '';
+      btnTestLlm.disabled = true;
+      btnTestLlm.textContent = '⏳ 正在连接测试...';
+      if (statusEl) {
+        statusEl.className = 'llm-test-status';
+        statusEl.textContent = '正在请求 OpenAI 兼容接口...';
+      }
+      try {
+        const res = await Bridge.testLlmConnection({ baseUrl, apiKey, model });
+        if (statusEl) {
+          statusEl.className = 'llm-test-status ok';
+          statusEl.textContent = `✅ 连接成功！耗时 ${res.latencyMs}ms · 端点: ${res.endpoint} · 模型返回: ${res.reply}`;
+        }
+      } catch (err) {
+        if (statusEl) {
+          statusEl.className = 'llm-test-status err';
+          let hint = err.message;
+          if (baseUrl.includes('deepseek.com') && apiKey && !apiKey.startsWith('sk-')) {
+            hint += '（提示：DeepSeek 官方 API Key 通常以 sk- 开头，当前填入的 UUID 格式可能不是有效的 DeepSeek Key）';
+          }
+          statusEl.textContent = `❌ 连接失败：${hint}`;
+        }
+      } finally {
+        btnTestLlm.disabled = false;
+        btnTestLlm.textContent = '🔌 测试 OpenAI 兼容接口连接';
+      }
     });
   }
 
