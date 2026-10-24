@@ -1110,8 +1110,27 @@ body {
   color: var(--text-secondary);
 }
 
-.form-field.full {
+.form-field.full,
+.form-field-inline.full {
   grid-column: 1 / -1;
+}
+
+.form-field-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-main);
+  cursor: pointer;
+  padding: 2px 0;
+}
+
+.form-field-inline input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
 }
 
 .form-field input[type="text"],

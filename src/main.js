@@ -1,38 +1,5 @@
 import { Bridge } from './bridge.js';
 
-const LLM_PRESETS = {
-  deepseek: {
-    label: 'DeepSeek (V4.1 Flash / Pro)',
-    baseUrl: 'https://api.deepseek.com',
-    model: 'deepseek-flash'
-  },
-  siliconflow: {
-    label: '硅基流动 SiliconFlow',
-    baseUrl: 'https://api.siliconflow.cn/v1',
-    model: 'Qwen/Qwen2.5-72B-Instruct'
-  },
-  dashscope: {
-    label: '阿里云·通义千问',
-    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-    model: 'qwen-plus'
-  },
-  volcengine: {
-    label: '火山引擎·豆包 Ark',
-    baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
-    model: 'doubao-1-5-pro-32k-250115'
-  },
-  openai: {
-    label: 'OpenAI 官方/中转',
-    baseUrl: 'https://api.openai.com/v1',
-    model: 'gpt-4o-mini'
-  },
-  ollama: {
-    label: 'Ollama 本地模型 (免 Key)',
-    baseUrl: 'http://localhost:11434/v1',
-    model: 'qwen2.5:7b'
-  }
-};
-
 const TYPE_META = {
   all: { label: '全部类型', icon: '✦' },
   text: { label: '文字笔记', icon: '📝' },
@@ -821,36 +788,28 @@ function renderSettingsView() {
   return `
     <main class="settings-shell">
       <section class="settings-card">
-        <h3>🤖 LLM 自动分类模型设置</h3>
-        <p class="settings-hint">支持任意 OpenAI 兼容接口（DeepSeek、硅基流动、通义千问、OpenAI 或本地 Ollama）。配置后每次随手丢入内容都会由大模型自动起标题、提炼摘要并归入对应分类文件夹。</p>
-
-        <div class="preset-row">
-          ${Object.entries(LLM_PRESETS).map(([key, p]) => `
-            <button class="preset-chip ${llm.providerPreset === key ? 'active' : ''}" data-preset="${key}">
-              ${escapeHtml(p.label)}
-            </button>
-          `).join('')}
-        </div>
+        <h3>🤖 OpenAI 兼容接口设置</h3>
+        <p class="settings-hint">支持任意标准 OpenAI 兼容接口（<code>/v1/chat/completions</code>）。配置后可用于自动起标题、提炼摘要、文件重命名与对话式寻物问答。</p>
 
         <div class="form-grid">
-          <label class="form-field">
-            <span>启用 LLM 自动分类</span>
+          <label class="form-field-inline full">
             <input type="checkbox" id="cfg-llm-enabled" ${llm.enabled !== false ? 'checked' : ''} />
+            <span>启用 OpenAI 兼容大模型（自动分类 / 文件智能重命名 / 聊天问答）</span>
           </label>
 
           <label class="form-field full">
-            <span>API Base URL</span>
-            <input type="text" id="cfg-llm-baseurl" value="${escapeHtml(llm.baseUrl || '')}" placeholder="https://api.deepseek.com/v1" />
+            <span>API Base URL (OpenAI 兼容接口地址)</span>
+            <input type="text" id="cfg-llm-baseurl" value="${escapeHtml(llm.baseUrl || '')}" placeholder="例如：https://api.openai.com/v1 或任意 OpenAI 兼容地址" />
           </label>
 
           <label class="form-field">
-            <span>API Key ${llm.providerPreset === 'ollama' ? '(本地 Ollama 可随便填 ollama)' : ''}</span>
+            <span>API Key</span>
             <input type="password" id="cfg-llm-apikey" value="${escapeHtml(llm.apiKey || '')}" placeholder="sk-..." />
           </label>
 
           <label class="form-field">
             <span>模型名称 (Model ID)</span>
-            <input type="text" id="cfg-llm-model" value="${escapeHtml(llm.model || '')}" placeholder="deepseek-chat" />
+            <input type="text" id="cfg-llm-model" value="${escapeHtml(llm.model || '')}" placeholder="例如：gpt-4o-mini / deepseek-flash" />
           </label>
 
           <label class="form-field full">
@@ -1735,22 +1694,6 @@ function bindEvents() {
   }
 
   // 设置页事件
-  document.querySelectorAll('[data-preset]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const key = btn.getAttribute('data-preset');
-      const preset = LLM_PRESETS[key];
-      if (!preset) return;
-      state.config.llm = {
-        ...state.config.llm,
-        providerPreset: key,
-        baseUrl: preset.baseUrl,
-        model: preset.model,
-        apiKey: key === 'ollama' && !state.config.llm.apiKey ? 'ollama' : state.config.llm.apiKey
-      };
-      render();
-    });
-  });
-
   const btnOpenVaultSettings = document.getElementById('btn-open-vault-in-settings');
   if (btnOpenVaultSettings) {
     btnOpenVaultSettings.addEventListener('click', () => {
