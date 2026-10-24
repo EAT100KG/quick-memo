@@ -6,6 +6,8 @@ src-tauri/gen/
 
 # Local user config (may contain LLM API keys)
 .quick-memo-config.json
+.window-cmd.json
+.webview-profile/
 
 # User local Markdown vault data
 vault/*

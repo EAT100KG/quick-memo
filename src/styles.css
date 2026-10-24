@@ -151,6 +151,12 @@ body {
   background: #f59e0b;
 }
 
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .ghost-btn, .tool-btn {
   border: 1px solid var(--border-color);
   background: var(--bg-surface);

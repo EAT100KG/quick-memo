@@ -239,6 +239,12 @@ function renderHeader() {
       </nav>
 
       <div class="topbar-actions">
+        <button class="ghost-btn" id="btn-win-dock-right" title="将窗口贴靠并缩到屏幕右侧外，鼠标移到屏幕右边缘或按 Alt+Space 即可滑出">
+          ⇥ 缩到屏幕外
+        </button>
+        <button class="ghost-btn" id="btn-win-hide" title="隐藏到系统托盘后台运行（按 Alt+Space 随时呼出，或按 Esc）">
+          ➖ 隐藏后台
+        </button>
         <button class="ghost-btn" id="btn-open-vault-folder" title="在 Windows 资源管理器中打开本地 Markdown 文件夹">
           📂 打开本地库
         </button>
@@ -694,6 +700,16 @@ function bindEvents() {
     btnOpenVault.addEventListener('click', () => Bridge.openInExplorer(state.config?.vaultPath));
   }
 
+  const btnWinDock = document.getElementById('btn-win-dock-right');
+  if (btnWinDock) {
+    btnWinDock.addEventListener('click', () => Bridge.sendWindowCommand('dock-right'));
+  }
+
+  const btnWinHide = document.getElementById('btn-win-hide');
+  if (btnWinHide) {
+    btnWinHide.addEventListener('click', () => Bridge.sendWindowCommand('hide'));
+  }
+
   const btnJumpCfg = document.getElementById('btn-jump-llm-cfg');
   if (btnJumpCfg) {
     btnJumpCfg.addEventListener('click', () => {
@@ -1036,11 +1052,20 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     state.activeTab = 'vault';
     render();
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    Bridge.sendWindowCommand('hide');
   } else if (e.key === '/' && document.activeElement?.tagName !== 'TEXTAREA' && document.activeElement?.tagName !== 'INPUT') {
     e.preventDefault();
     state.activeTab = 'vault';
     render();
     setTimeout(() => document.getElementById('vault-search-input')?.focus(), 20);
+  }
+});
+
+window.addEventListener('focus', () => {
+  if (state.activeTab === 'capture') {
+    focusCaptureInput();
   }
 });
 

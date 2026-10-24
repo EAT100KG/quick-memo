@@ -161,6 +161,12 @@ function quickMemoLocalServerPlugin() {
             openInExplorer(body.path);
             return sendJson(res, 200, { ok: true });
           }
+          if (url.pathname === '/api/window-cmd' && req.method === 'POST') {
+            const body = await readJsonBody(req);
+            const cmdFile = path.join(process.cwd(), '.window-cmd.json');
+            fs.writeFileSync(cmdFile, JSON.stringify({ cmd: body.cmd, time: Date.now() }), 'utf-8');
+            return sendJson(res, 200, { ok: true });
+          }
           return sendJson(res, 404, { error: 'Not found' });
         } catch (err) {
           console.error('[API Error]', err);

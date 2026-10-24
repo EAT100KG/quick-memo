@@ -302,5 +302,12 @@ export const Bridge = {
   getAssetUrl(absPath) {
     if (!absPath) return '';
     return `/api/asset?path=${encodeURIComponent(absPath)}`;
+  },
+
+  async sendWindowCommand(cmd) {
+    return apiRequest('/api/window-cmd', {
+      method: 'POST',
+      body: JSON.stringify({ cmd })
+    });
   }
 };
