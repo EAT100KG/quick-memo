@@ -120,17 +120,79 @@ function escapeHtml(str = '') {
     .replace(/"/g, '&quot;');
 }
 
-function formatChatMarkdown(raw = '') {
-  const escaped = escapeHtml(raw);
-  return escaped
-    .replace(/^###\s+(.+)$/gm, '<div class="chat-md-h3">$1</div>')
-    .replace(/^##\s+(.+)$/gm, '<div class="chat-md-h2">$1</div>')
-    .replace(/^#\s+(.+)$/gm, '<div class="chat-md-h2">$1</div>')
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+function formatInlineMarkdown(escapedLine = '') {
+  return escapedLine
     .replace(/`([^`\n]+)`/g, '<code class="chat-inline-code">$1</code>')
-    .replace(/^&gt;\s*(.+)$/gm, '<blockquote class="chat-quote">$1</blockquote>')
-    .replace(/^\s*[-*]\s+(.+)$/gm, '<div class="chat-md-li">• $1</div>')
-    .replace(/\r?\n/g, '<br/>');
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*([^*\n]+)\*/g, '<em>$1</em>')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener" class="chat-md-link">$1</a>');
+}
+
+function formatChatMarkdown(raw = '') {
+  const codeBlocks = [];
+  // 1. 先提取 ```...``` 代码块，避免内部符号被普通行级规则破坏
+  const withPlaceholders = String(raw || '').replace(/```([a-zA-Z0-9_-]*)\r?\n([\s\S]*?)```/g, (_, lang, code) => {
+    const cleanCode = String(code || '').replace(/\r?\n$/, '');
+    const idx = codeBlocks.length;
+    const langLabel = (lang || '').trim().toUpperCase() || 'TEXT / KEY';
+    codeBlocks.push(`
+      <div class="chat-pre-wrap">
+        <div class="chat-pre-bar">
+          <span class="chat-pre-lang">${escapeHtml(langLabel)}</span>
+          <button class="chat-copy-code-btn" data-copy-code="${escapeHtml(cleanCode)}">📋 复制</button>
+        </div>
+        <pre class="chat-pre-code"><code>${escapeHtml(cleanCode)}</code></pre>
+      </div>
+    `);
+    return `\n@@CODE_BLOCK_${idx}@@\n`;
+  });
+
+  const lines = withPlaceholders.split(/\r?\n/);
+  const out = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    const codeMatch = trimmed.match(/^@@CODE_BLOCK_(\d+)@@$/);
+    if (codeMatch) {
+      out.push(codeBlocks[Number(codeMatch[1])] || '');
+      continue;
+    }
+
+    if (!trimmed) {
+      out.push('<div class="chat-md-spacer"></div>');
+      continue;
+    }
+
+    if (/^---+$/.test(trimmed)) {
+      out.push('<hr class="chat-md-hr" />');
+      continue;
+    }
+
+    const esc = escapeHtml(line);
+
+    if (/^####\s+(.+)$/.test(esc)) {
+      out.push(`<div class="chat-md-h3">${formatInlineMarkdown(esc.replace(/^####\s+/, ''))}</div>`);
+    } else if (/^###\s+(.+)$/.test(esc)) {
+      out.push(`<div class="chat-md-h3">${formatInlineMarkdown(esc.replace(/^###\s+/, ''))}</div>`);
+    } else if (/^##\s+(.+)$/.test(esc)) {
+      out.push(`<div class="chat-md-h2">${formatInlineMarkdown(esc.replace(/^##\s+/, ''))}</div>`);
+    } else if (/^#\s+(.+)$/.test(esc)) {
+      out.push(`<div class="chat-md-h2">${formatInlineMarkdown(esc.replace(/^#\s+/, ''))}</div>`);
+    } else if (/^&gt;\s*(.*)$/.test(esc)) {
+      out.push(`<blockquote class="chat-quote">${formatInlineMarkdown(esc.replace(/^&gt;\s*/, ''))}</blockquote>`);
+    } else if (/^\s*[-*•]\s+(.+)$/.test(esc)) {
+      out.push(`<div class="chat-md-li"><span class="li-dot">•</span><span>${formatInlineMarkdown(esc.replace(/^\s*[-*•]\s+/, ''))}</span></div>`);
+    } else if (/^\s*(\d+[.)、])\s+(.+)$/.test(esc)) {
+      const m = esc.match(/^\s*(\d+[.)、])\s+(.+)$/);
+      out.push(`<div class="chat-md-li"><span class="li-num">${m[1]}</span><span>${formatInlineMarkdown(m[2])}</span></div>`);
+    } else {
+      out.push(`<div class="chat-md-p">${formatInlineMarkdown(esc)}</div>`);
+    }
+  }
+
+  return out.join('');
 }
 
 function formatSize(bytes = 0) {
@@ -2105,6 +2167,23 @@ function bindEvents() {
   if (btnSendChat) {
     btnSendChat.addEventListener('click', () => handleSendChatMessage());
   }
+
+  // 一键复制 Markdown 代码块 / API Key
+  document.querySelectorAll('[data-copy-code]').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const code = btn.getAttribute('data-copy-code') || '';
+      if (!code) return;
+      try {
+        await navigator.clipboard.writeText(code);
+        const orig = btn.textContent;
+        btn.textContent = '✅ 已复制';
+        setTimeout(() => {
+          btn.textContent = orig;
+        }, 1200);
+      } catch {}
+    });
+  });
 }
 
 // 全局窗口快捷键
