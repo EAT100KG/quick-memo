@@ -44,14 +44,13 @@ namespace QuickMemo
                 float radius = boxSize * 0.24f;
                 RectangleF rect = new RectangleF(pad, pad, boxSize, boxSize);
 
-                // 1. macOS 风格流光渐变底板 (靛紫 -> 科技蓝 -> 冰川青)
                 using (GraphicsPath bgPath = CreateRoundedRectPath(rect, radius))
                 {
                     using (var bgBrush = new LinearGradientBrush(
                         new PointF(rect.Left, rect.Top),
                         new PointF(rect.Right, rect.Bottom),
-                        Color.FromArgb(255, 99, 102, 241), // #6366F1
-                        Color.FromArgb(255, 6, 182, 212))) // #06B6D4
+                        Color.FromArgb(255, 99, 102, 241),
+                        Color.FromArgb(255, 6, 182, 212)))
                     {
                         var blend = new ColorBlend(3)
                         {
@@ -67,7 +66,6 @@ namespace QuickMemo
                         g.FillPath(bgBrush, bgPath);
                     }
 
-                    // 顶部柔光玻璃折射层
                     RectangleF glossRect = new RectangleF(rect.Left, rect.Top, rect.Width, rect.Height * 0.55f);
                     using (var glossBrush = new LinearGradientBrush(
                         glossRect,
@@ -80,14 +78,12 @@ namespace QuickMemo
                         g.ResetClip();
                     }
 
-                    // 镜面内高光边框
                     using (var borderPen = new Pen(Color.FromArgb(115, 255, 255, 255), Math.Max(1f, size * 0.022f)))
                     {
                         g.DrawPath(borderPen, bgPath);
                     }
                 }
 
-                // 2. 中心悬浮磨砂白便签卡片
                 float cardW = boxSize * 0.54f;
                 float cardH = boxSize * 0.60f;
                 float cardX = pad + (boxSize - cardW) * 0.44f;
@@ -95,7 +91,6 @@ namespace QuickMemo
                 float cardRadius = cardW * 0.18f;
                 RectangleF cardRect = new RectangleF(cardX, cardY, cardW, cardH);
 
-                // 卡片柔和投影
                 RectangleF shadowRect = new RectangleF(cardX + size * 0.015f, cardY + size * 0.03f, cardW, cardH);
                 using (GraphicsPath shadowPath = CreateRoundedRectPath(shadowRect, cardRadius))
                 using (var shadowBrush = new SolidBrush(Color.FromArgb(55, 15, 23, 42)))
@@ -103,7 +98,6 @@ namespace QuickMemo
                     g.FillPath(shadowBrush, shadowPath);
                 }
 
-                // 卡片本体
                 using (GraphicsPath cardPath = CreateRoundedRectPath(cardRect, cardRadius))
                 using (var cardBrush = new LinearGradientBrush(
                     cardRect,
@@ -114,7 +108,6 @@ namespace QuickMemo
                     g.FillPath(cardBrush, cardPath);
                 }
 
-                // 卡片上的三行精致分类笔记横线
                 float lineLeft = cardX + cardW * 0.20f;
                 float lineThickness = Math.Max(1.5f, size * 0.048f);
                 using (var linePen1 = new Pen(Color.FromArgb(235, 59, 130, 246), lineThickness) { StartCap = LineCap.Round, EndCap = LineCap.Round })
@@ -129,7 +122,6 @@ namespace QuickMemo
                     g.DrawLine(linePen3, lineLeft, y3, cardX + cardW * 0.52f, y3);
                 }
 
-                // 3. 右上角璀璨 AI 四角星芒 (Sparkle)
                 float starCx = pad + boxSize * 0.74f;
                 float starCy = pad + boxSize * 0.27f;
                 float starR = boxSize * 0.21f;
@@ -171,7 +163,6 @@ namespace QuickMemo
                 bmp256.Save(pngPath, ImageFormat.Png);
             }
 
-            // 生成包含 256, 64, 32, 16 的多分辨率标准 ICO
             int[] sizes = new[] { 256, 64, 32, 16 };
             byte[][] pngBuffers = new byte[sizes.Length][];
             for (int i = 0; i < sizes.Length; i++)
@@ -187,9 +178,9 @@ namespace QuickMemo
             using (var fs = new FileStream(icoPath, FileMode.Create, FileAccess.Write))
             using (var bw = new BinaryWriter(fs))
             {
-                bw.Write((ushort)0); // Reserved
-                bw.Write((ushort)1); // Type: ICO
-                bw.Write((ushort)sizes.Length); // Count
+                bw.Write((ushort)0);
+                bw.Write((ushort)1);
+                bw.Write((ushort)sizes.Length);
 
                 int offset = 6 + 16 * sizes.Length;
                 for (int i = 0; i < sizes.Length; i++)
@@ -271,6 +262,18 @@ namespace QuickMemo
         private static extern IntPtr GetForegroundWindow();
 
         [DllImport("user32.dll")]
+        private static extern bool BringWindowToTop(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+        [DllImport("kernel32.dll")]
+        private static extern uint GetCurrentThreadId();
+
+        [DllImport("user32.dll")]
+        private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+
+        [DllImport("user32.dll")]
         private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
         [DllImport("user32.dll")]
@@ -291,9 +294,6 @@ namespace QuickMemo
         [DllImport("user32.dll")]
         private static extern short GetAsyncKeyState(int vKey);
 
-        [DllImport("user32.dll")]
-        private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
-
         [StructLayout(LayoutKind.Sequential)]
         public struct RECT
         {
@@ -311,17 +311,16 @@ namespace QuickMemo
         private const uint MOD_ALT = 0x0001;
         private const uint VK_SPACE = 0x20;
         private const int VK_LBUTTON = 0x01;
-        private const byte VK_MENU = 0x12;
-        private const uint KEYEVENTF_EXTENDEDKEY = 0x0001;
-        private const uint KEYEVENTF_KEYUP = 0x0002;
 
         private const int SW_HIDE = 0;
         private const int SW_SHOW = 5;
         private const int SW_RESTORE = 9;
 
-        private static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
+        private static readonly IntPtr HWND_TOP = new IntPtr(0);
+        private static readonly IntPtr HWND_BOTTOM = new IntPtr(1);
         private static readonly IntPtr HWND_NOTOPMOST = new IntPtr(-2);
         private const uint SWP_NOSIZE = 0x0001;
+        private const uint SWP_NOMOVE = 0x0002;
         private const uint SWP_NOACTIVATE = 0x0010;
         private const uint SWP_SHOWWINDOW = 0x0040;
 
@@ -341,8 +340,13 @@ namespace QuickMemo
         private bool _hasShownCloseTip = false;
         private bool _wasWindowAlive = false;
 
+        // 贴边与快捷键展开状态控制
         private DockEdge _dockEdge = DockEdge.None;
         private bool _isCollapsedOutside = false;
+        private bool _expandedByShortcut = false;
+        private bool _hasMouseEnteredSinceExpand = false;
+        private DateTime _expandTimestamp = DateTime.MinValue;
+        private DateTime _lastHotKeyTime = DateTime.MinValue;
         private Rectangle _expandedBounds = new Rectangle(200, 120, 1060, 720);
         private DateTime _mouseLeftTime = DateTime.MinValue;
 
@@ -355,7 +359,6 @@ namespace QuickMemo
                 try { File.Delete(_cmdFilePath); } catch { }
             }
 
-            // 同步更新本地图标文件
             try
             {
                 string iconDir = Path.Combine(_appRoot, "src-tauri", "icons");
@@ -373,7 +376,7 @@ namespace QuickMemo
             SetupGlobalHotKey();
             OpenOrActivateWindow();
 
-            _monitorTimer = new System.Windows.Forms.Timer { Interval = 80 };
+            _monitorTimer = new System.Windows.Forms.Timer { Interval = 90 };
             _monitorTimer.Tick += OnMonitorTick;
             _monitorTimer.Start();
         }
@@ -450,7 +453,7 @@ namespace QuickMemo
             openItem.Font = new Font(openItem.Font, FontStyle.Bold);
             openItem.Click += (s, e) => ToggleWindowByShortcut();
 
-            var dockRightItem = new ToolStripMenuItem("⇥ 缩到屏幕右侧边缘 (苹果磨砂悬浮条)");
+            var dockRightItem = new ToolStripMenuItem("⇥ 缩到桌面右侧边缘 (苹果磨砂悬浮条)");
             dockRightItem.Click += (s, e) => DockWindowToRightEdgeAndCollapse();
 
             var undockItem = new ToolStripMenuItem("🗔 恢复居中普通窗口");
@@ -484,8 +487,9 @@ namespace QuickMemo
         private void SetupEdgePeekForm()
         {
             _edgePeekForm = new EdgePeekForm();
-            _edgePeekForm.MouseEnterTrigger += (s, e) => ExpandFromOutside(true);
-            _edgePeekForm.ClickTrigger += (s, e) => ExpandFromOutside(true);
+            // 鼠标移到桌面侧边磨砂条上时展开（非快捷键展开，鼠标移入即激活）
+            _edgePeekForm.MouseEnterTrigger += (s, e) => ExpandFromOutside(true, false);
+            _edgePeekForm.ClickTrigger += (s, e) => ExpandFromOutside(true, true);
         }
 
         private void SetupGlobalHotKey()
@@ -531,6 +535,9 @@ namespace QuickMemo
             return found;
         }
 
+        /// <summary>
+        /// 使用 AttachThreadInput 将窗口平顺地置为前台焦点（不模拟 Alt 按键，避免触发浏览器系统菜单导致失焦缩回）
+        /// </summary>
         private void ForceForeground(IntPtr hwnd)
         {
             try
@@ -544,15 +551,38 @@ namespace QuickMemo
                     ShowWindow(hwnd, SW_SHOW);
                 }
 
-                keybd_event(VK_MENU, 0, KEYEVENTF_EXTENDEDKEY, UIntPtr.Zero);
-                SetForegroundWindow(hwnd);
-                keybd_event(VK_MENU, 0, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP, UIntPtr.Zero);
+                IntPtr fgHwnd = GetForegroundWindow();
+                if (fgHwnd != hwnd)
+                {
+                    uint dummy;
+                    uint fgThread = GetWindowThreadProcessId(fgHwnd, out dummy);
+                    uint curThread = GetCurrentThreadId();
+                    if (fgThread != curThread && fgThread != 0)
+                    {
+                        AttachThreadInput(curThread, fgThread, true);
+                        BringWindowToTop(hwnd);
+                        SetForegroundWindow(hwnd);
+                        AttachThreadInput(curThread, fgThread, false);
+                    }
+                    else
+                    {
+                        BringWindowToTop(hwnd);
+                        SetForegroundWindow(hwnd);
+                    }
+                }
             }
             catch { }
         }
 
         public void ToggleWindowByShortcut()
         {
+            // 300ms 防抖，防止长按或按键回弹造成弹出又立刻缩回
+            if ((DateTime.Now - _lastHotKeyTime).TotalMilliseconds < 300)
+            {
+                return;
+            }
+            _lastHotKeyTime = DateTime.Now;
+
             IntPtr hwnd = FindQuickMemoWindow();
             if (hwnd == IntPtr.Zero)
             {
@@ -565,7 +595,7 @@ namespace QuickMemo
                 _hiddenToTray = false;
                 if (_dockEdge != DockEdge.None)
                 {
-                    ExpandFromOutside(true);
+                    ExpandFromOutside(true, true);
                 }
                 else
                 {
@@ -576,13 +606,14 @@ namespace QuickMemo
 
             if (_isCollapsedOutside)
             {
-                ExpandFromOutside(true);
+                ExpandFromOutside(true, true);
                 return;
             }
 
             IntPtr fg = GetForegroundWindow();
             if (fg == hwnd)
             {
+                // 当前已在前台焦点：再按一次 Alt+Space 则收起
                 if (_dockEdge != DockEdge.None)
                 {
                     CollapseToOutside();
@@ -594,6 +625,10 @@ namespace QuickMemo
             }
             else
             {
+                // 窗口虽然展开但被其它窗口挡在后面 -> 唤到前台并保持展开
+                _expandedByShortcut = true;
+                _hasMouseEnteredSinceExpand = false;
+                _expandTimestamp = DateTime.Now;
                 ForceForeground(hwnd);
             }
         }
@@ -608,7 +643,7 @@ namespace QuickMemo
             {
                 if (_isCollapsedOutside)
                 {
-                    ExpandFromOutside(true);
+                    ExpandFromOutside(true, true);
                 }
                 else
                 {
@@ -665,7 +700,7 @@ namespace QuickMemo
             if (GetWindowRect(hwnd, out r))
             {
                 Screen scr = Screen.FromHandle(hwnd);
-                int w = Math.Min(Math.Max(r.Width, 520), 920);
+                int w = Math.Min(Math.Max(r.Width, 520), 960);
                 int h = Math.Min(Math.Max(r.Height, 540), scr.WorkingArea.Height - 40);
                 int x = scr.WorkingArea.Right - w;
                 int y = Math.Max(scr.WorkingArea.Top + 20, Math.Min(r.Top, scr.WorkingArea.Bottom - h - 20));
@@ -679,6 +714,7 @@ namespace QuickMemo
         {
             _dockEdge = DockEdge.None;
             _isCollapsedOutside = false;
+            _expandedByShortcut = false;
             _hiddenToTray = false;
             _edgePeekForm.Hide();
 
@@ -711,30 +747,38 @@ namespace QuickMemo
 
             if (_dockEdge == DockEdge.Right)
             {
-                targetX = work.Right - 1;
+                targetX = work.Right + 20;
             }
             else if (_dockEdge == DockEdge.Left)
             {
-                targetX = work.Left - _expandedBounds.Width + 1;
+                targetX = work.Left - _expandedBounds.Width - 20;
             }
             else if (_dockEdge == DockEdge.Top)
             {
-                targetY = work.Top - _expandedBounds.Height + 1;
+                targetY = work.Top - _expandedBounds.Height - 20;
             }
 
-            SetWindowPos(hwnd, HWND_TOPMOST, targetX, targetY, _expandedBounds.Width, _expandedBounds.Height, SWP_NOACTIVATE);
+            // 将主窗口移到屏幕外并隐藏，避免残留边框阴影
+            SetWindowPos(hwnd, HWND_NOTOPMOST, targetX, targetY, _expandedBounds.Width, _expandedBounds.Height, SWP_NOACTIVATE);
+            ShowWindow(hwnd, SW_HIDE);
             _isCollapsedOutside = true;
+            _expandedByShortcut = false;
+            _hasMouseEnteredSinceExpand = false;
 
-            _edgePeekForm.ShowAtEdge(_dockEdge, scr.WorkingArea, _expandedBounds);
+            // 在桌面底层显示苹果磨砂侧边小标签（只贴在桌面上，不压在其它软件窗口上面）
+            _edgePeekForm.ShowAtDesktopEdge(_dockEdge, scr.WorkingArea, _expandedBounds);
         }
 
-        private void ExpandFromOutside(bool activateFocus)
+        private void ExpandFromOutside(bool activateFocus, bool byShortcut)
         {
             IntPtr hwnd = FindQuickMemoWindow();
             if (hwnd == IntPtr.Zero) return;
 
             _edgePeekForm.Hide();
             _isCollapsedOutside = false;
+            _expandedByShortcut = byShortcut;
+            _hasMouseEnteredSinceExpand = !byShortcut;
+            _expandTimestamp = DateTime.Now;
             _mouseLeftTime = DateTime.MinValue;
 
             Screen scr = Screen.FromRectangle(_expandedBounds);
@@ -758,7 +802,8 @@ namespace QuickMemo
             _expandedBounds.X = targetX;
             _expandedBounds.Y = targetY;
 
-            SetWindowPos(hwnd, HWND_TOPMOST, targetX, targetY, _expandedBounds.Width, _expandedBounds.Height, SWP_SHOWWINDOW);
+            ShowWindow(hwnd, SW_SHOW);
+            SetWindowPos(hwnd, HWND_TOP, targetX, targetY, _expandedBounds.Width, _expandedBounds.Height, SWP_SHOWWINDOW);
             if (activateFocus)
             {
                 ForceForeground(hwnd);
@@ -793,42 +838,25 @@ namespace QuickMemo
                 return;
             }
 
-            if (_hiddenToTray || !IsWindowVisible(hwnd) || IsIconic(hwnd))
+            if (_hiddenToTray)
+            {
+                return;
+            }
+
+            // 如果当前已经缩在屏幕外面：保持侧边条在桌面底层，仅靠侧边条自身的鼠标事件或 Alt+Space 唤醒
+            if (_isCollapsedOutside)
+            {
+                _edgePeekForm.SendToDesktopBottom();
+                return;
+            }
+
+            if (!IsWindowVisible(hwnd) || IsIconic(hwnd))
             {
                 return;
             }
 
             bool isMouseDown = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
             Point cursor = Cursor.Position;
-
-            if (_isCollapsedOutside)
-            {
-                Screen scr = Screen.FromRectangle(_expandedBounds);
-                Rectangle work = scr.Bounds;
-                bool hitEdge = false;
-
-                if (_dockEdge == DockEdge.Right && cursor.X >= work.Right - 4 &&
-                    cursor.Y >= _expandedBounds.Top && cursor.Y <= _expandedBounds.Bottom)
-                {
-                    hitEdge = true;
-                }
-                else if (_dockEdge == DockEdge.Left && cursor.X <= work.Left + 4 &&
-                         cursor.Y >= _expandedBounds.Top && cursor.Y <= _expandedBounds.Bottom)
-                {
-                    hitEdge = true;
-                }
-                else if (_dockEdge == DockEdge.Top && cursor.Y <= work.Top + 4 &&
-                         cursor.X >= _expandedBounds.Left && cursor.X <= _expandedBounds.Right)
-                {
-                    hitEdge = true;
-                }
-
-                if (hitEdge)
-                {
-                    ExpandFromOutside(true);
-                }
-                return;
-            }
 
             RECT rect;
             if (!GetWindowRect(hwnd, out rect)) return;
@@ -864,28 +892,49 @@ namespace QuickMemo
                     if (farFromRight && farFromLeft && farFromTop)
                     {
                         _dockEdge = DockEdge.None;
-                        SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE | 0x0002);
                     }
                 }
             }
 
+            // 贴边模式下的自动缩回逻辑
             if (_dockEdge != DockEdge.None && !isMouseDown)
             {
-                Rectangle inflated = Rectangle.Inflate(winRect, 12, 12);
-                if (!inflated.Contains(cursor))
+                // 刚展开的前 800ms 内处于保护期，绝不自动缩回
+                if ((DateTime.Now - _expandTimestamp).TotalMilliseconds < 800)
                 {
-                    if (_mouseLeftTime == DateTime.MinValue)
+                    return;
+                }
+
+                Rectangle inflated = Rectangle.Inflate(winRect, 14, 14);
+                bool mouseInside = inflated.Contains(cursor);
+
+                if (mouseInside)
+                {
+                    _hasMouseEnteredSinceExpand = true;
+                    _mouseLeftTime = DateTime.MinValue;
+                    return;
+                }
+
+                // 如果是由 Alt+Space 快捷键唤醒的，且鼠标一直没移进窗口：
+                // 只要当前窗口仍处于前台焦点（用户正在用键盘打字或粘贴），就一直保持展开！
+                // 只有当用户点击了其它软件导致失焦，或者鼠标进过窗口又移出时，才自动缩回。
+                if (_expandedByShortcut && !_hasMouseEnteredSinceExpand)
+                {
+                    IntPtr fg = GetForegroundWindow();
+                    if (fg == hwnd)
                     {
-                        _mouseLeftTime = DateTime.Now;
-                    }
-                    else if ((DateTime.Now - _mouseLeftTime).TotalMilliseconds >= 450)
-                    {
-                        CollapseToOutside();
+                        _mouseLeftTime = DateTime.MinValue;
+                        return;
                     }
                 }
-                else
+
+                if (_mouseLeftTime == DateTime.MinValue)
                 {
-                    _mouseLeftTime = DateTime.MinValue;
+                    _mouseLeftTime = DateTime.Now;
+                }
+                else if ((DateTime.Now - _mouseLeftTime).TotalMilliseconds >= 550)
+                {
+                    CollapseToOutside();
                 }
             }
         }
@@ -965,7 +1014,7 @@ namespace QuickMemo
                 IntPtr hwnd = FindQuickMemoWindow();
                 if (hwnd != IntPtr.Zero && _isCollapsedOutside)
                 {
-                    ExpandFromOutside(false);
+                    ExpandFromOutside(false, false);
                 }
             }
             catch { }
@@ -1005,18 +1054,20 @@ namespace QuickMemo
     }
 
     /// <summary>
-    /// 苹果 macOS / iPadOS 风格透明磨砂毛玻璃侧边悬浮胶囊 (Frosted Acrylic Glass Pill)
-    /// 结合 Windows DWM SetWindowCompositionAttribute 实时背景高斯模糊 + GDI+ 镜面高光内边框渲染
+    /// 苹果透明磨砂毛玻璃侧边悬浮胶囊（置于桌面层级 HWND_BOTTOM，只在桌面露出时可见，不遮挡普通应用窗口）
     /// </summary>
     public class EdgePeekForm : Form
     {
-        #region DWM Frosted Acrylic Glass Interop
+        #region DWM & Z-Order Interop
 
         [DllImport("user32.dll")]
         private static extern int SetWindowCompositionAttribute(IntPtr hwnd, ref WindowCompositionAttributeData data);
 
         [DllImport("dwmapi.dll")]
         private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
+
+        [DllImport("user32.dll")]
+        private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
 
         [StructLayout(LayoutKind.Sequential)]
         private struct AccentPolicy
@@ -1036,10 +1087,15 @@ namespace QuickMemo
         }
 
         private const int WCA_ACCENT_POLICY = 19;
-        private const int ACCENT_ENABLE_BLURBEHIND = 3;
         private const int ACCENT_ENABLE_ACRYLICBLURBEHIND = 4;
         private const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
         private const int DWMWCP_ROUND = 2;
+
+        private static readonly IntPtr HWND_BOTTOM = new IntPtr(1);
+        private const uint SWP_NOSIZE = 0x0001;
+        private const uint SWP_NOMOVE = 0x0002;
+        private const uint SWP_NOACTIVATE = 0x0010;
+        private const uint SWP_SHOWWINDOW = 0x0040;
 
         #endregion
 
@@ -1052,9 +1108,8 @@ namespace QuickMemo
         {
             FormBorderStyle = FormBorderStyle.None;
             ShowInTaskbar = false;
-            TopMost = true;
+            TopMost = false; // 不置顶，保持在桌面低层级
             StartPosition = FormStartPosition.Manual;
-            // 使用纯黑底配合 DWM Acrylic 透明通道合成，让背后桌面呈现真实高斯模糊磨砂感
             BackColor = Color.Black;
             Width = 28;
             Height = 108;
@@ -1081,8 +1136,8 @@ namespace QuickMemo
             get
             {
                 CreateParams cp = base.CreateParams;
-                // WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOREDIRECTIONBITMAP compatible
-                cp.ExStyle |= 0x00000080;
+                // WS_EX_TOOLWINDOW (0x80) | WS_EX_NOACTIVATE (0x08000000)
+                cp.ExStyle |= 0x00000080 | 0x08000000;
                 return cp;
             }
         }
@@ -1091,13 +1146,21 @@ namespace QuickMemo
         {
             base.OnHandleCreated(e);
             EnableAppleFrostedBlur();
+            SendToDesktopBottom();
+        }
+
+        public void SendToDesktopBottom()
+        {
+            if (IsHandleCreated && Visible)
+            {
+                SetWindowPos(Handle, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            }
         }
 
         private void EnableAppleFrostedBlur()
         {
             try
             {
-                // 1. 启用 Windows 11 硬件抗锯齿圆角 (DWMWCP_ROUND)
                 int cornerPref = DWMWCP_ROUND;
                 DwmSetWindowAttribute(Handle, DWMWA_WINDOW_CORNER_PREFERENCE, ref cornerPref, sizeof(int));
             }
@@ -1105,12 +1168,11 @@ namespace QuickMemo
 
             try
             {
-                // 2. 启用 DWM Acrylic 实时高斯模糊磨砂背景 (AABBGGRR: 半透明冰川灰白磨砂层)
                 var accent = new AccentPolicy
                 {
                     AccentState = ACCENT_ENABLE_ACRYLICBLURBEHIND,
                     AccentFlags = 2,
-                    GradientColor = 0x50F8FAFC // 约 31% 冰白磨砂叠加高斯模糊
+                    GradientColor = 0x50F8FAFC
                 };
 
                 int size = Marshal.SizeOf(accent);
@@ -1137,32 +1199,30 @@ namespace QuickMemo
             }
         }
 
-        public void ShowAtEdge(DockEdge edge, Rectangle workArea, Rectangle expandedBounds)
+        public void ShowAtDesktopEdge(DockEdge edge, Rectangle workArea, Rectangle expandedBounds)
         {
             _currentEdge = edge;
+            int x, y, w, h;
             if (edge == DockEdge.Top)
             {
-                Width = 108;
-                Height = 28;
-                int x = Math.Max(workArea.Left + 24, Math.Min(expandedBounds.Left + expandedBounds.Width / 2 - 54, workArea.Right - 132));
-                int y = workArea.Top + 4;
-                SetBounds(x, y, Width, Height);
+                w = 108;
+                h = 28;
+                x = Math.Max(workArea.Left + 24, Math.Min(expandedBounds.Left + expandedBounds.Width / 2 - 54, workArea.Right - 132));
+                y = workArea.Top + 4;
             }
             else if (edge == DockEdge.Left)
             {
-                Width = 28;
-                Height = 108;
-                int x = workArea.Left + 4;
-                int y = Math.Max(workArea.Top + 40, Math.Min(expandedBounds.Top + 90, workArea.Bottom - 130));
-                SetBounds(x, y, Width, Height);
+                w = 28;
+                h = 108;
+                x = workArea.Left + 4;
+                y = Math.Max(workArea.Top + 40, Math.Min(expandedBounds.Top + 90, workArea.Bottom - 130));
             }
             else
             {
-                Width = 28;
-                Height = 108;
-                int x = workArea.Right - Width - 4;
-                int y = Math.Max(workArea.Top + 40, Math.Min(expandedBounds.Top + 90, workArea.Bottom - 130));
-                SetBounds(x, y, Width, Height);
+                w = 28;
+                h = 108;
+                x = workArea.Right - w - 4;
+                y = Math.Max(workArea.Top + 40, Math.Min(expandedBounds.Top + 90, workArea.Bottom - 130));
             }
 
             if (!Visible)
@@ -1170,6 +1230,8 @@ namespace QuickMemo
                 Show();
                 EnableAppleFrostedBlur();
             }
+            // 将侧边磨砂条放置在 Z-Order 最底层（紧贴桌面之上、所有普通应用窗口之下）
+            SetWindowPos(Handle, HWND_BOTTOM, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
             Invalidate();
         }
 
@@ -1184,7 +1246,6 @@ namespace QuickMemo
 
             using (GraphicsPath pillPath = AppIconRenderer.CreateRoundedRectPath(rect, radius))
             {
-                // 苹果磨砂柔光渐变层 (冰川白高光 -> 半透蓝灰微光)
                 using (var glassBrush = new LinearGradientBrush(
                     rect,
                     Color.FromArgb(68, 255, 255, 255),
@@ -1194,7 +1255,6 @@ namespace QuickMemo
                     g.FillPath(glassBrush, pillPath);
                 }
 
-                // 苹果标志性的 1px 镜面高光内边框 (Specular Highlight Border)
                 using (var borderBrush = new LinearGradientBrush(
                     rect,
                     Color.FromArgb(185, 255, 255, 255),
@@ -1208,7 +1268,6 @@ namespace QuickMemo
 
             if (_currentEdge == DockEdge.Top)
             {
-                // 水平胶囊布局：左侧微光圆标 + 右侧 iOS 风格磨砂呼吸握把条
                 float badgeSize = 16f;
                 float badgeX = 10f;
                 float badgeY = (Height - badgeSize) / 2f;
@@ -1223,7 +1282,6 @@ namespace QuickMemo
             }
             else
             {
-                // 垂直胶囊布局：上方微光星芒徽标 + 下方 iOS 风格磨砂呼吸握把条
                 float badgeSize = 17f;
                 float badgeX = (Width - badgeSize) / 2f;
                 float badgeY = 12f;
@@ -1272,7 +1330,6 @@ namespace QuickMemo
         {
             string appRoot = AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\', '/');
 
-            // 支持命令行仅生成图标 (--gen-icons)
             if (args != null && args.Length > 0 && args[0] == "--gen-icons")
             {
                 string iconDir = Path.Combine(appRoot, "src-tauri", "icons");

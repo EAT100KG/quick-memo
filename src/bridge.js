@@ -271,6 +271,13 @@ export const Bridge = {
     });
   },
 
+  async renameAttachment(id, attIndex, newName) {
+    return apiRequest('/api/memos/rename-attachment', {
+      method: 'POST',
+      body: JSON.stringify({ id, attIndex, newName })
+    });
+  },
+
   async deleteMemo(id) {
     if (isTauri()) {
       try {

@@ -290,8 +290,14 @@ function renderCaptureView() {
                   : `<span class="draft-att-icon">📎</span>`
                 }
                 <div class="draft-att-info">
-                  <div class="draft-att-name">${escapeHtml(att.name)}</div>
-                  <div class="draft-att-size">${formatSize(att.size)}</div>
+                  <input
+                    type="text"
+                    class="draft-att-name-input"
+                    data-edit-draft-att="${att.id}"
+                    value="${escapeHtml(att.name)}"
+                    title="可直接修改文件名以便日后搜索"
+                  />
+                  <div class="draft-att-size">${formatSize(att.size)} · 点击上方文件名可直接改名</div>
                 </div>
                 <button class="draft-att-remove" data-remove-att="${att.id}" title="移除附件">×</button>
               </div>
@@ -549,16 +555,29 @@ function renderMemoDetail(memo) {
 
         ${memo.attachments && memo.attachments.length > 0 ? `
           <div class="detail-attachments-section">
-            <div class="section-caption">归档附件 (${memo.attachments.length})</div>
+            <div class="section-caption">归档附件 (${memo.attachments.length}) · 可直接重命名文件方便搜索</div>
             <div class="detail-att-list">
-              ${memo.attachments.map((att) => `
+              ${memo.attachments.map((att, attIdx) => `
                 <div class="detail-att-card">
                   ${(att.mimeType || '').startsWith('image/') ? `
                     <img src="${Bridge.getAssetUrl(att.absPath)}" class="detail-image-preview" alt="${escapeHtml(att.name)}" />
                   ` : ''}
                   <div class="detail-att-bar">
-                    <span>📎 ${escapeHtml(att.name)} (${formatSize(att.size)})</span>
-                    <button class="mini-btn" data-open-md="${escapeHtml(att.absPath)}">打开所在位置</button>
+                    <div class="detail-att-rename-group">
+                      <span>📎</span>
+                      <input
+                        type="text"
+                        class="detail-att-name-input"
+                        id="att-rename-input-${attIdx}"
+                        value="${escapeHtml(att.name)}"
+                        title="修改文件名并点右侧‘重命名’同步更新磁盘文件"
+                      />
+                      <span class="att-size-label">(${formatSize(att.size)})</span>
+                    </div>
+                    <div class="detail-att-btns">
+                      <button class="mini-btn primary" data-rename-att-idx="${attIdx}" data-memo-id="${escapeHtml(memo.id)}">✏️ 重命名文件</button>
+                      <button class="mini-btn" data-open-md="${escapeHtml(att.absPath)}">打开所在位置</button>
+                    </div>
                   </div>
                 </div>
               `).join('')}
@@ -808,6 +827,25 @@ function bindEvents() {
     });
   });
 
+  document.querySelectorAll('[data-edit-draft-att]').forEach((input) => {
+    input.addEventListener('input', (e) => {
+      const id = input.getAttribute('data-edit-draft-att');
+      const target = state.draftAttachments.find((a) => a.id === id);
+      if (target) {
+        target.name = e.target.value;
+      }
+    });
+    input.addEventListener('focus', (e) => {
+      const val = e.target.value;
+      const dotIdx = val.lastIndexOf('.');
+      if (dotIdx > 0) {
+        e.target.setSelectionRange(0, dotIdx);
+      } else {
+        e.target.select();
+      }
+    });
+  });
+
   const btnSubmit = document.getElementById('btn-submit-memo');
   if (btnSubmit) {
     btnSubmit.addEventListener('click', handleSubmitCapture);
@@ -826,6 +864,38 @@ function bindEvents() {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       Bridge.openInExplorer(btn.getAttribute('data-open-md'));
+    });
+  });
+
+  // 重命名已归档附件
+  document.querySelectorAll('[data-rename-att-idx]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const attIdx = Number(btn.getAttribute('data-rename-att-idx'));
+      const memoId = btn.getAttribute('data-memo-id');
+      const inputEl = document.getElementById(`att-rename-input-${attIdx}`);
+      const newName = inputEl?.value.trim();
+      if (!newName) return;
+      btn.textContent = '⏳ 重命名中...';
+      btn.disabled = true;
+      try {
+        const res = await Bridge.renameAttachment(memoId, attIdx, newName);
+        state.memos = state.memos.map((m) => (m.id === memoId ? res.memo : m));
+        render();
+      } catch (err) {
+        alert(`重命名失败：${err.message}`);
+        render();
+      }
+    });
+  });
+
+  document.querySelectorAll('.detail-att-name-input').forEach((input) => {
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const idx = input.id.replace('att-rename-input-', '');
+        const btn = document.querySelector(`[data-rename-att-idx="${idx}"]`);
+        if (btn) btn.click();
+      }
     });
   });
 

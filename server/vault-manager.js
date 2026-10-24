@@ -389,6 +389,84 @@ export function deleteMemo(id) {
   return { deleted: true, id };
 }
 
+/**
+ * 重命名某条记录下的指定附件（同步修改磁盘 assets 下的真实文件名、.md 内容及索引）
+ */
+export function renameAttachment(memoId, attIndex, newNameInput) {
+  const config = getConfig();
+  const vaultPath = config.vaultPath;
+  const index = readIndex(vaultPath);
+  const idx = index.findIndex((x) => x.id === memoId);
+  if (idx === -1) {
+    throw new Error(`找不到记录: ${memoId}`);
+  }
+
+  const memo = index[idx];
+  if (!Array.isArray(memo.attachments) || !memo.attachments[attIndex]) {
+    throw new Error('找不到要重命名的附件');
+  }
+
+  const att = memo.attachments[attIndex];
+  const oldName = att.name || '';
+  const oldExt = path.extname(oldName) || (att.absPath ? path.extname(att.absPath) : '');
+
+  let cleanNewName = sanitizeFileName(newNameInput || '');
+  if (!cleanNewName) {
+    throw new Error('文件名不能为空');
+  }
+  // 如果用户输入的新名字没带后缀，自动补上原后缀
+  if (oldExt && !cleanNewName.toLowerCase().endsWith(oldExt.toLowerCase())) {
+    cleanNewName += oldExt;
+  }
+
+  const oldAbsPath = att.absPath || path.join(path.dirname(memo.mdAbsPath), att.relPath);
+  let newAbsPath = oldAbsPath;
+  let newRelPath = att.relPath;
+
+  if (oldAbsPath && fs.existsSync(oldAbsPath)) {
+    const assetsDir = path.dirname(oldAbsPath);
+    const baseWithoutExt = path.basename(cleanNewName, path.extname(cleanNewName));
+    const ext = path.extname(cleanNewName) || oldExt;
+    const prefixMatch = path.basename(oldAbsPath).match(/^(\d{8}_\d{6})_/);
+    const prefix = prefixMatch ? prefixMatch[1] : formatDateParts().compactFull;
+    const diskFileName = `${prefix}_${sanitizeFileName(baseWithoutExt)}${ext}`;
+    newAbsPath = path.join(assetsDir, diskFileName);
+
+    if (oldAbsPath !== newAbsPath) {
+      fs.renameSync(oldAbsPath, newAbsPath);
+    }
+    newRelPath = `./assets/${diskFileName}`;
+  }
+
+  memo.attachments[attIndex] = {
+    ...att,
+    name: cleanNewName,
+    absPath: newAbsPath,
+    relPath: newRelPath
+  };
+
+  // 如果原记录标题和摘要还带着旧的乱码文件名，同步替换为新文件名方便搜索
+  let updatedTitle = memo.title;
+  if (oldName && updatedTitle.includes(oldName)) {
+    updatedTitle = updatedTitle.replace(oldName, cleanNewName);
+  } else if (updatedTitle.startsWith('文件归档：') || updatedTitle.startsWith('图片记录：')) {
+    const prefix = updatedTitle.split('：')[0];
+    updatedTitle = `${prefix}：${cleanNewName}`;
+  }
+
+  let updatedSummary = memo.summary || '';
+  if (oldName && updatedSummary.includes(oldName)) {
+    updatedSummary = updatedSummary.replace(oldName, cleanNewName);
+  }
+
+  writeIndex(vaultPath, index);
+
+  return updateMemo(memoId, {
+    title: updatedTitle,
+    summary: updatedSummary
+  });
+}
+
 export function listMemos() {
   const config = getConfig();
   const vaultPath = config.vaultPath;

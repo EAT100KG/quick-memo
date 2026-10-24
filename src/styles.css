@@ -282,7 +282,23 @@ body {
   border: 1px solid var(--border-color);
   padding: 6px 10px;
   border-radius: 8px;
-  max-width: 240px;
+  max-width: 340px;
+}
+
+.draft-att-name-input {
+  width: 100%;
+  border: 1px solid transparent;
+  background: #fff;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.draft-att-name-input:focus {
+  outline: none;
+  border-color: var(--accent);
 }
 
 .draft-att-thumb {
@@ -879,6 +895,43 @@ body {
   justify-content: space-between;
   align-items: center;
   font-size: 12.5px;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.detail-att-rename-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 220px;
+}
+
+.detail-att-name-input {
+  flex: 1;
+  padding: 5px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  background: #fff;
+  color: var(--text-main);
+}
+
+.detail-att-name-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.att-size-label {
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.detail-att-btns {
+  display: flex;
+  gap: 6px;
 }
 
 /* 设置页 */

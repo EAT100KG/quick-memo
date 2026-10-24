@@ -8,6 +8,7 @@ import {
   saveMemo,
   updateMemo,
   deleteMemo,
+  renameAttachment,
   openInExplorer
 } from './server/vault-manager.js';
 import { classifyWithLLM, heuristicClassify } from './server/llm-classifier.js';
@@ -150,6 +151,11 @@ function quickMemoLocalServerPlugin() {
           if (url.pathname === '/api/memos/update' && req.method === 'POST') {
             const body = await readJsonBody(req);
             const updated = updateMemo(body.id, body.patch || {});
+            return sendJson(res, 200, { memo: updated });
+          }
+          if (url.pathname === '/api/memos/rename-attachment' && req.method === 'POST') {
+            const body = await readJsonBody(req);
+            const updated = renameAttachment(body.id, Number(body.attIndex), body.newName);
             return sendJson(res, 200, { memo: updated });
           }
           if (url.pathname === '/api/memos/delete' && req.method === 'POST') {

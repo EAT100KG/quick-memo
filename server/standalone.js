@@ -11,6 +11,7 @@ import {
   saveMemo,
   updateMemo,
   deleteMemo,
+  renameAttachment,
   openInExplorer
 } from './vault-manager.js';
 import { classifyWithLLM, heuristicClassify } from './llm-classifier.js';
@@ -201,6 +202,11 @@ export function startStandaloneServer(port = 1420, openWindow = false) {
         if (url.pathname === '/api/memos/update' && req.method === 'POST') {
           const body = await readJsonBody(req);
           const updated = updateMemo(body.id, body.patch || {});
+          return sendJson(res, 200, { memo: updated });
+        }
+        if (url.pathname === '/api/memos/rename-attachment' && req.method === 'POST') {
+          const body = await readJsonBody(req);
+          const updated = renameAttachment(body.id, Number(body.attIndex), body.newName);
           return sendJson(res, 200, { memo: updated });
         }
         if (url.pathname === '/api/memos/delete' && req.method === 'POST') {
