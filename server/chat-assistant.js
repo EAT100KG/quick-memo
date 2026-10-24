@@ -117,8 +117,19 @@ export async function askVaultAssistant({ message = '', history = [] }) {
 
   const { results, queryTokens, isOverviewQuery, stats } = searchDocIndex(cleanMsg, 5);
 
-  // 组装前端可点击跳转的引用卡片数据源
-  const sources = results.map((item) => {
+  // 组装前端可点击跳转的引用卡片数据源（如果存在标题与附件完全相同的重复归档，自动去重保留最新一条）
+  const seenSourceKeys = new Set();
+  const dedupedResults = [];
+  for (const item of results) {
+    const d = item.doc;
+    const attKey = (d.attachments || []).map((a) => a.name).join('|');
+    const dedupKey = `${d.title}::${d.category}::${attKey}`;
+    if (seenSourceKeys.has(dedupKey)) continue;
+    seenSourceKeys.add(dedupKey);
+    dedupedResults.push(item);
+  }
+
+  const sources = dedupedResults.map((item) => {
     const d = item.doc;
     const best = buildBestSnippet(item.matchedChunks, queryTokens, d.summary);
     const pdfAtt = (d.attachments || []).find(
@@ -157,7 +168,7 @@ export async function askVaultAssistant({ message = '', history = [] }) {
   );
 
   // 构建给大模型的检索上下文 (RAG Grounded Context)
-  const contextBlocks = results.map((item, i) => {
+  const contextBlocks = dedupedResults.map((item, i) => {
     const d = item.doc;
     const attDesc = (d.attachments || []).length > 0
       ? d.attachments.map((a) => `${a.name} (${a.extractedChars || 0}字)`).join(', ')

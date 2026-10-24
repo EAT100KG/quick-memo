@@ -11,7 +11,8 @@ const STOP_PHRASES = [
   '能不能找', '帮我搜索', '搜索一下', '查找一下', '之前保存的', '我保存的', '我存的',
   '收纳盒里', '知识库里', '有没有关于', '有没有', '关于', '相关的', '相关的文件',
   '相关的文档', '在哪儿', '在哪里', '在哪', '是什么', '有哪些', '讲了什么', '写了什么',
-  '怎么说的', '里提到', '里面有', '的文档', '的文件', '的笔记', '记录', '请问', '一下'
+  '怎么说的', '里提到', '里面有', '的文档', '的文件', '的笔记', '文档', '文件', '笔记',
+  '记录', '资料', '请问', '一下'
 ];
 
 const STOP_CHARS = new Set([
@@ -492,8 +493,15 @@ export function searchDocIndex(query = '', topK = 5) {
     return String(b.doc.createdAt || '').localeCompare(String(a.doc.createdAt || ''));
   });
 
+  // 相对相关性阈值过滤：如果第一名是强匹配，过滤掉只因边缘字擦边而得分极低的无关记录
+  let filteredDocs = scoredDocs;
+  if (!isOverviewQuery && scoredDocs.length > 1 && scoredDocs[0].score >= 15) {
+    const minScoreThreshold = Math.max(8, scoredDocs[0].score * 0.25);
+    filteredDocs = scoredDocs.filter((item) => item.score >= minScoreThreshold);
+  }
+
   return {
-    results: scoredDocs.slice(0, topK),
+    results: filteredDocs.slice(0, topK),
     queryTokens,
     isOverviewQuery,
     stats
