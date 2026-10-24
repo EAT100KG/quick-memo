@@ -286,6 +286,9 @@ namespace QuickMemo
         private static extern bool IsIconic(IntPtr hWnd);
 
         [DllImport("user32.dll")]
+        private static extern bool IsZoomed(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
         private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
 
         [DllImport("user32.dll")]
@@ -343,12 +346,10 @@ namespace QuickMemo
         // 贴边与快捷键展开状态控制
         private DockEdge _dockEdge = DockEdge.None;
         private bool _isCollapsedOutside = false;
-        private bool _expandedByShortcut = false;
-        private bool _hasMouseEnteredSinceExpand = false;
-        private DateTime _expandTimestamp = DateTime.MinValue;
+        private bool _isPinnedTopMost = false;
+        private bool _wasMouseDragging = false;
         private DateTime _lastHotKeyTime = DateTime.MinValue;
         private Rectangle _expandedBounds = new Rectangle(200, 120, 1060, 720);
-        private DateTime _mouseLeftTime = DateTime.MinValue;
 
         public QuickMemoAppContext(string appRoot)
         {
@@ -626,9 +627,6 @@ namespace QuickMemo
             else
             {
                 // 窗口虽然展开但被其它窗口挡在后面 -> 唤到前台并保持展开
-                _expandedByShortcut = true;
-                _hasMouseEnteredSinceExpand = false;
-                _expandTimestamp = DateTime.Now;
                 ForceForeground(hwnd);
             }
         }
@@ -714,7 +712,6 @@ namespace QuickMemo
         {
             _dockEdge = DockEdge.None;
             _isCollapsedOutside = false;
-            _expandedByShortcut = false;
             _hiddenToTray = false;
             _edgePeekForm.Hide();
 
@@ -731,8 +728,18 @@ namespace QuickMemo
             int x = scr.WorkingArea.Left + (scr.WorkingArea.Width - w) / 2;
             int y = scr.WorkingArea.Top + (scr.WorkingArea.Height - h) / 2;
 
-            SetWindowPos(hwnd, HWND_NOTOPMOST, x, y, w, h, SWP_SHOWWINDOW);
+            SetWindowPos(hwnd, _isPinnedTopMost ? new IntPtr(-1) : HWND_NOTOPMOST, x, y, w, h, SWP_SHOWWINDOW);
             ForceForeground(hwnd);
+        }
+
+        public void SetWindowPinnedTopMost(bool pin)
+        {
+            _isPinnedTopMost = pin;
+            IntPtr hwnd = FindQuickMemoWindow();
+            if (hwnd != IntPtr.Zero && IsWindow(hwnd))
+            {
+                SetWindowPos(hwnd, pin ? new IntPtr(-1) : HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            }
         }
 
         private void CollapseToOutside()
@@ -762,8 +769,6 @@ namespace QuickMemo
             SetWindowPos(hwnd, HWND_NOTOPMOST, targetX, targetY, _expandedBounds.Width, _expandedBounds.Height, SWP_NOACTIVATE);
             ShowWindow(hwnd, SW_HIDE);
             _isCollapsedOutside = true;
-            _expandedByShortcut = false;
-            _hasMouseEnteredSinceExpand = false;
 
             // 在桌面底层显示苹果磨砂侧边小标签（只贴在桌面上，不压在其它软件窗口上面）
             _edgePeekForm.ShowAtDesktopEdge(_dockEdge, scr.WorkingArea, _expandedBounds);
@@ -776,10 +781,6 @@ namespace QuickMemo
 
             _edgePeekForm.Hide();
             _isCollapsedOutside = false;
-            _expandedByShortcut = byShortcut;
-            _hasMouseEnteredSinceExpand = !byShortcut;
-            _expandTimestamp = DateTime.Now;
-            _mouseLeftTime = DateTime.MinValue;
 
             Screen scr = Screen.FromRectangle(_expandedBounds);
             Rectangle work = scr.WorkingArea;
@@ -788,22 +789,22 @@ namespace QuickMemo
 
             if (_dockEdge == DockEdge.Right)
             {
-                targetX = work.Right - _expandedBounds.Width;
+                targetX = work.Right - _expandedBounds.Width - 12;
             }
             else if (_dockEdge == DockEdge.Left)
             {
-                targetX = work.Left;
+                targetX = work.Left + 12;
             }
             else if (_dockEdge == DockEdge.Top)
             {
-                targetY = work.Top;
+                targetY = work.Top + 12;
             }
 
             _expandedBounds.X = targetX;
             _expandedBounds.Y = targetY;
 
             ShowWindow(hwnd, SW_SHOW);
-            SetWindowPos(hwnd, HWND_TOP, targetX, targetY, _expandedBounds.Width, _expandedBounds.Height, SWP_SHOWWINDOW);
+            SetWindowPos(hwnd, _isPinnedTopMost ? new IntPtr(-1) : HWND_TOP, targetX, targetY, _expandedBounds.Width, _expandedBounds.Height, SWP_SHOWWINDOW);
             if (activateFocus)
             {
                 ForceForeground(hwnd);
@@ -850,91 +851,42 @@ namespace QuickMemo
                 return;
             }
 
-            if (!IsWindowVisible(hwnd) || IsIconic(hwnd))
+            if (!IsWindowVisible(hwnd) || IsIconic(hwnd) || IsZoomed(hwnd))
             {
                 return;
             }
 
             bool isMouseDown = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
-            Point cursor = Cursor.Position;
-
-            RECT rect;
-            if (!GetWindowRect(hwnd, out rect)) return;
-            Rectangle winRect = rect.ToRectangle();
-            Screen currentScreen = Screen.FromRectangle(winRect);
-            Rectangle screenBounds = currentScreen.WorkingArea;
-
-            if (!isMouseDown)
+            if (isMouseDown)
             {
-                const int snapThreshold = 18;
-                const int unsnapThreshold = 36;
-
-                if (Math.Abs(winRect.Right - screenBounds.Right) <= snapThreshold || winRect.Right > screenBounds.Right)
-                {
-                    _dockEdge = DockEdge.Right;
-                    _expandedBounds = new Rectangle(screenBounds.Right - winRect.Width, winRect.Top, winRect.Width, winRect.Height);
-                }
-                else if (Math.Abs(winRect.Left - screenBounds.Left) <= snapThreshold || winRect.Left < screenBounds.Left)
-                {
-                    _dockEdge = DockEdge.Left;
-                    _expandedBounds = new Rectangle(screenBounds.Left, winRect.Top, winRect.Width, winRect.Height);
-                }
-                else if (Math.Abs(winRect.Top - screenBounds.Top) <= snapThreshold || winRect.Top < screenBounds.Top)
-                {
-                    _dockEdge = DockEdge.Top;
-                    _expandedBounds = new Rectangle(winRect.Left, screenBounds.Top, winRect.Width, winRect.Height);
-                }
-                else if (_dockEdge != DockEdge.None)
-                {
-                    bool farFromRight = Math.Abs(winRect.Right - screenBounds.Right) > unsnapThreshold;
-                    bool farFromLeft = Math.Abs(winRect.Left - screenBounds.Left) > unsnapThreshold;
-                    bool farFromTop = Math.Abs(winRect.Top - screenBounds.Top) > unsnapThreshold;
-                    if (farFromRight && farFromLeft && farFromTop)
-                    {
-                        _dockEdge = DockEdge.None;
-                    }
-                }
+                _wasMouseDragging = true;
+                return;
             }
 
-            // 贴边模式下的自动缩回逻辑
-            if (_dockEdge != DockEdge.None && !isMouseDown)
+            // 仅当用户刚刚用鼠标把窗口主动往屏幕右/左边缘外面推（超出屏幕边界 60px 以上）并松开鼠标时，才自动缩成侧边磨砂小标签！
+            // 平时打开微信、切换焦点或鼠标移开，窗口绝不会自己退回后台！
+            if (_wasMouseDragging)
             {
-                // 刚展开的前 800ms 内处于保护期，绝不自动缩回
-                if ((DateTime.Now - _expandTimestamp).TotalMilliseconds < 800)
+                _wasMouseDragging = false;
+                RECT rect;
+                if (GetWindowRect(hwnd, out rect))
                 {
-                    return;
-                }
+                    Rectangle winRect = rect.ToRectangle();
+                    Screen currentScreen = Screen.FromRectangle(winRect);
+                    Rectangle screenBounds = currentScreen.WorkingArea;
 
-                Rectangle inflated = Rectangle.Inflate(winRect, 14, 14);
-                bool mouseInside = inflated.Contains(cursor);
-
-                if (mouseInside)
-                {
-                    _hasMouseEnteredSinceExpand = true;
-                    _mouseLeftTime = DateTime.MinValue;
-                    return;
-                }
-
-                // 如果是由 Alt+Space 快捷键唤醒的，且鼠标一直没移进窗口：
-                // 只要当前窗口仍处于前台焦点（用户正在用键盘打字或粘贴），就一直保持展开！
-                // 只有当用户点击了其它软件导致失焦，或者鼠标进过窗口又移出时，才自动缩回。
-                if (_expandedByShortcut && !_hasMouseEnteredSinceExpand)
-                {
-                    IntPtr fg = GetForegroundWindow();
-                    if (fg == hwnd)
+                    if (winRect.Right > screenBounds.Right + 60)
                     {
-                        _mouseLeftTime = DateTime.MinValue;
-                        return;
+                        _dockEdge = DockEdge.Right;
+                        _expandedBounds = new Rectangle(screenBounds.Right - winRect.Width - 12, Math.Max(screenBounds.Top + 20, winRect.Top), winRect.Width, winRect.Height);
+                        CollapseToOutside();
                     }
-                }
-
-                if (_mouseLeftTime == DateTime.MinValue)
-                {
-                    _mouseLeftTime = DateTime.Now;
-                }
-                else if ((DateTime.Now - _mouseLeftTime).TotalMilliseconds >= 550)
-                {
-                    CollapseToOutside();
+                    else if (winRect.Left < screenBounds.Left - 60)
+                    {
+                        _dockEdge = DockEdge.Left;
+                        _expandedBounds = new Rectangle(screenBounds.Left + 12, Math.Max(screenBounds.Top + 20, winRect.Top), winRect.Width, winRect.Height);
+                        CollapseToOutside();
+                    }
                 }
             }
         }
@@ -957,6 +909,14 @@ namespace QuickMemo
                 else if (raw.Contains("\"restore\""))
                 {
                     RestoreCenterNormalWindow();
+                }
+                else if (raw.Contains("\"pin-on\""))
+                {
+                    SetWindowPinnedTopMost(true);
+                }
+                else if (raw.Contains("\"pin-off\""))
+                {
+                    SetWindowPinnedTopMost(false);
                 }
             }
             catch { }

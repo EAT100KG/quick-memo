@@ -48,6 +48,7 @@ const state = {
   memos: [],
   loading: false,
   saving: false,
+  windowPinned: false,
 
   // 极速捕获框状态
   draftContent: '',
@@ -282,7 +283,10 @@ function renderHeader() {
       </nav>
 
       <div class="topbar-actions">
-        <button class="ghost-btn" id="btn-win-dock-right" title="将窗口贴靠并缩到屏幕右侧外，鼠标移到屏幕右边缘或按 Alt+Space 即可滑出">
+        <button class="ghost-btn ${state.windowPinned ? 'pinned-active' : ''}" id="btn-win-pin" title="开启后窗口保持在最前，打开微信复制或拖文件时不会被微信盖住">
+          📌 ${state.windowPinned ? '已钉在最前' : '钉住窗口'}
+        </button>
+        <button class="ghost-btn" id="btn-win-dock-right" title="将窗口贴靠并缩到屏幕右侧外，鼠标移到桌面右边缘或按 Alt+Space 即可滑出">
           ⇥ 缩到屏幕外
         </button>
         <button class="ghost-btn" id="btn-win-hide" title="隐藏到系统托盘后台运行（按 Alt+Space 随时呼出，或按 Esc）">
@@ -780,6 +784,15 @@ function bindEvents() {
   const btnOpenVault = document.getElementById('btn-open-vault-folder');
   if (btnOpenVault) {
     btnOpenVault.addEventListener('click', () => Bridge.openInExplorer(state.config?.vaultPath));
+  }
+
+  const btnWinPin = document.getElementById('btn-win-pin');
+  if (btnWinPin) {
+    btnWinPin.addEventListener('click', () => {
+      state.windowPinned = !state.windowPinned;
+      Bridge.sendWindowCommand(state.windowPinned ? 'pin-on' : 'pin-off');
+      render();
+    });
   }
 
   const btnWinDock = document.getElementById('btn-win-dock-right');
