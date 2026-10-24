@@ -17,3 +17,5 @@ vault/*
 .DS_Store
 Thumbs.db
 *.log
+
+AGENTS.md
