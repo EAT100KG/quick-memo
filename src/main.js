@@ -90,17 +90,55 @@ function fileToBase64(file) {
 }
 
 async function addFilesToDraft(fileList) {
+  const newItems = [];
   for (const file of Array.from(fileList)) {
     const dataBase64 = await fileToBase64(file);
-    state.draftAttachments.push({
+    const origName = file.name || `截图_${new Date().toTimeString().slice(0, 8).replace(/:/g, '')}.png`;
+    const attObj = {
       id: `att_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      name: file.name || `截图_${new Date().toTimeString().slice(0, 8).replace(/:/g, '')}.png`,
+      name: origName,
+      originalName: origName,
       mimeType: file.type || 'application/octet-stream',
       size: file.size || 0,
-      dataBase64
-    });
+      dataBase64,
+      renaming: true,
+      autoRenamed: false
+    };
+    state.draftAttachments.push(attObj);
+    newItems.push(attObj);
   }
   render();
+
+  // 立即异步读取文件内部内容并自动重命名
+  for (const item of newItems) {
+    try {
+      const res = await Bridge.smartRenameFile(
+        { name: item.name, mimeType: item.mimeType, dataBase64: item.dataBase64 },
+        state.draftContent
+      );
+      const target = state.draftAttachments.find((a) => a.id === item.id);
+      if (target) {
+        if (res.newName) {
+          target.name = res.newName;
+          target.autoRenamed = Boolean(res.renamed);
+        }
+        if (res.extractedText) {
+          target.extractedText = res.extractedText;
+        }
+        if (res.detectedTitle) {
+          target.detectedTitle = res.detectedTitle;
+        }
+        target.renaming = false;
+        render();
+      }
+    } catch {
+      const target = state.draftAttachments.find((a) => a.id === item.id);
+      if (target) {
+        target.renaming = false;
+        render();
+      }
+    }
+  }
 }
 
 async function init() {
@@ -302,7 +340,13 @@ function renderCaptureView() {
                     value="${escapeHtml(att.name)}"
                     title="可直接修改文件名以便日后搜索"
                   />
-                  <div class="draft-att-size">${formatSize(att.size)} · 点击上方文件名可直接改名</div>
+                  <div class="draft-att-size">
+                    ${att.renaming
+                      ? '⏳ 正在读取文件内容自动重命名...'
+                      : att.autoRenamed
+                        ? `✨ 已根据内容自动重命名 · ${formatSize(att.size)}`
+                        : `${formatSize(att.size)} · 点击上方文件名可直接改名`}
+                  </div>
                 </div>
                 <button class="draft-att-remove" data-remove-att="${att.id}" title="移除附件">×</button>
               </div>

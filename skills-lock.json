@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "extension-openai": {
+      "source": "caffeinelabs/skills",
+      "sourceType": "github",
+      "skillPath": "skills/extension-openai/SKILL.md",
+      "computedHash": "dd1130234616b43097c83b6de6e8e907306a9fa8ab4ded14d5e33ba9f9925621"
+    }
+  }
+}

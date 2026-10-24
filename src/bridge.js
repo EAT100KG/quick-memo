@@ -323,5 +323,12 @@ export const Bridge = {
       method: 'POST',
       body: JSON.stringify({ llm })
     });
+  },
+
+  async smartRenameFile(attachment, noteText = '') {
+    return apiRequest('/api/files/smart-rename', {
+      method: 'POST',
+      body: JSON.stringify({ attachment, noteText })
+    });
   }
 };

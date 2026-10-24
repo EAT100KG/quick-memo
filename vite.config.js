@@ -11,7 +11,7 @@ import {
   renameAttachment,
   openInExplorer
 } from './server/vault-manager.js';
-import { classifyWithLLM, heuristicClassify, testLlmConnection } from './server/llm-classifier.js';
+import { classifyWithLLM, heuristicClassify, testLlmConnection, smartRenameUploadedFile } from './server/llm-classifier.js';
 
 function readJsonBody(req) {
   return new Promise((resolve, reject) => {
@@ -83,6 +83,11 @@ function quickMemoLocalServerPlugin() {
           if (url.pathname === '/api/llm/test' && req.method === 'POST') {
             const body = await readJsonBody(req);
             const result = await testLlmConnection(body.llm);
+            return sendJson(res, 200, result);
+          }
+          if (url.pathname === '/api/files/smart-rename' && req.method === 'POST') {
+            const body = await readJsonBody(req);
+            const result = await smartRenameUploadedFile(body.attachment || {}, body.noteText || '');
             return sendJson(res, 200, result);
           }
           if (url.pathname === '/api/memos/quick-save' && req.method === 'POST') {

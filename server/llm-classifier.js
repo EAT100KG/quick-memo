@@ -1,9 +1,10 @@
 import path from 'node:path';
+import OpenAI from 'openai';
 import { getConfig, sanitizeFileName } from './vault-manager.js';
 import { extractFileContent, isMeaninglessFileName } from './file-extractor.js';
 
 /**
- * 预处理附件：提取 PDF/Word/文本文件的内部正文和标题，供 AI 与本地规则引擎阅读和自动重命名
+ * 预处理附件：提取 PDF/Word/文本文件的内部正文和标题
  */
 export function enrichAttachmentsWithContent(attachments = []) {
   return attachments.map((att) => {
@@ -27,14 +28,200 @@ export function normalizeRenamedFile(originalName = '', suggestedName = '') {
   let clean = sanitizeFileName(String(suggestedName || '').trim());
   if (!clean) return originalName;
   if (origExt && !clean.toLowerCase().endsWith(origExt.toLowerCase())) {
-    // 去掉可能多余的其他后缀再补原后缀
     clean = clean.replace(/\.[a-z0-9]{1,5}$/i, '') + origExt;
   }
   return clean;
 }
 
 /**
- * 本地启发式规则分类与文件自动重命名（当未配置 API Key 或接口异常时兜底，同样会读取 PDF/文档内部标题自动重命名！）
+ * 规范化用户输入的 OpenAI 兼容 baseURL，返回可供官方 OpenAI SDK 使用的候选 baseURL 列表
+ */
+export function buildCandidateBaseURLs(rawBaseUrl = '') {
+  let clean = String(rawBaseUrl || '').trim().replace(/\/+$/, '');
+  if (!clean) return [];
+  // 如果用户误把 /chat/completions 填进了 Base URL，自动剥离
+  clean = clean.replace(/\/chat\/completions$/i, '');
+
+  if (/\/v\d+(?:\/[a-z0-9_-]+)?$/i.test(clean)) {
+    return [clean];
+  }
+  // 如 https://api.deepseek.com 既支持直接拼 /chat/completions，也支持 /v1/chat/completions
+  return [clean, `${clean}/v1`];
+}
+
+/**
+ * 使用官方 openai Node.js SDK 调用兼容接口（自动处理 baseURL 回退与 JSON Mode 兼容）
+ */
+async function callOpenAISdkChat({ baseUrl, apiKey, model, messages, jsonMode = false, timeoutMs = 20000 }) {
+  const candidates = buildCandidateBaseURLs(baseUrl);
+  if (candidates.length === 0) {
+    throw new Error('未配置 API Base URL');
+  }
+
+  let lastError = null;
+  for (let i = 0; i < candidates.length; i++) {
+    const candidateBaseURL = candidates[i];
+    const client = new OpenAI({
+      baseURL: candidateBaseURL,
+      apiKey: apiKey || 'ollama',
+      timeout: timeoutMs,
+      maxRetries: 1
+    });
+
+    try {
+      const reqParams = {
+        model: model || 'deepseek-flash',
+        temperature: 0.2,
+        messages
+      };
+      if (jsonMode) {
+        reqParams.response_format = { type: 'json_object' };
+      }
+
+      try {
+        const completion = await client.chat.completions.create(reqParams);
+        return { completion, usedBaseURL: candidateBaseURL };
+      } catch (innerErr) {
+        // 如果模型不支持 response_format: json_object (HTTP 400)，去掉 response_format 重试一次
+        if (jsonMode && innerErr?.status === 400) {
+          delete reqParams.response_format;
+          const completion = await client.chat.completions.create(reqParams);
+          return { completion, usedBaseURL: candidateBaseURL };
+        }
+        throw innerErr;
+      }
+    } catch (err) {
+      lastError = err;
+      // 如果是 404 且还有带 /v1 的备选地址，继续尝试
+      if (err?.status === 404 && i < candidates.length - 1) {
+        continue;
+      }
+      break;
+    }
+  }
+
+  const msg = lastError?.error?.message || lastError?.message || '调用 OpenAI 兼容接口失败';
+  throw new Error(msg);
+}
+
+/**
+ * 阶段一：当用户刚拖入/选择文件上传时，立即提取文件内容并自动生成重命名后的清晰文件名
+ */
+export async function smartRenameUploadedFile(att, noteText = '') {
+  const origName = att.name || '未命名文件';
+  const origExt = path.extname(origName);
+  const { extractedText, detectedTitle } = extractFileContent(att);
+  const config = getConfig();
+  const llmCfg = config.llm || {};
+
+  // 先计算基于文档内部真实标题的保底新文件名
+  let fallbackName = origName;
+  if (detectedTitle) {
+    fallbackName = normalizeRenamedFile(origName, detectedTitle);
+  } else if (noteText && isMeaninglessFileName(origName)) {
+    const firstLine = noteText.split(/\r?\n/).map((l) => l.trim()).find(Boolean) || '';
+    if (firstLine) fallbackName = normalizeRenamedFile(origName, firstLine.slice(0, 28));
+  }
+
+  const canUseLlm = Boolean(
+    llmCfg.enabled &&
+    llmCfg.baseUrl &&
+    (llmCfg.apiKey || llmCfg.providerPreset === 'ollama')
+  );
+
+  if (!canUseLlm) {
+    return {
+      originalName: origName,
+      newName: fallbackName,
+      renamed: fallbackName !== origName,
+      extractedText,
+      detectedTitle,
+      aiUsed: false
+    };
+  }
+
+  const isImg = (att.mimeType || '').startsWith('image/') && att.dataBase64;
+  if (!extractedText && !isImg && !noteText) {
+    return {
+      originalName: origName,
+      newName: fallbackName,
+      renamed: fallbackName !== origName,
+      extractedText,
+      detectedTitle,
+      aiUsed: false
+    };
+  }
+
+  const sysPrompt = `你是专业的文件归档重命名助手。请根据用户上传文件的内部提取文本（或图片内容）及备注，为该文件起一个清晰、准确、便于日后搜索的中文文件名（10~26个字以内，必须保留原扩展名 "${origExt}"）。
+请严格只输出 JSON 对象：{"newName": "清晰的新文件名${origExt}"}`;
+
+  const userPrompt = `原文件名：${origName}
+用户备注：${noteText || '无'}
+文件内部提取文本：
+${extractedText ? extractedText.slice(0, 1500) : '（无文本）'}`;
+
+  try {
+    const messages = [
+      { role: 'system', content: sysPrompt },
+      isImg
+        ? {
+            role: 'user',
+            content: [
+              { type: 'text', text: userPrompt },
+              {
+                type: 'image_url',
+                image_url: {
+                  url: att.dataBase64.startsWith('data:')
+                    ? att.dataBase64
+                    : `data:${att.mimeType || 'image/png'};base64,${att.dataBase64}`
+                }
+              }
+            ]
+          }
+        : { role: 'user', content: userPrompt }
+    ];
+
+    const { completion } = await callOpenAISdkChat({
+      baseUrl: llmCfg.baseUrl,
+      apiKey: llmCfg.apiKey,
+      model: llmCfg.model,
+      messages,
+      jsonMode: true,
+      timeoutMs: 12000
+    });
+
+    const raw = completion?.choices?.[0]?.message?.content || '';
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (match) {
+      const parsed = JSON.parse(match[0]);
+      if (parsed.newName) {
+        const finalName = normalizeRenamedFile(origName, parsed.newName);
+        return {
+          originalName: origName,
+          newName: finalName,
+          renamed: finalName !== origName,
+          extractedText,
+          detectedTitle,
+          aiUsed: true
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('[SmartRename] Fallback to extracted title rename:', err.message);
+  }
+
+  return {
+    originalName: origName,
+    newName: fallbackName,
+    renamed: fallbackName !== origName,
+    extractedText,
+    detectedTitle,
+    aiUsed: false
+  };
+}
+
+/**
+ * 本地启发式规则分类与文件自动重命名（当未配置 API Key 或接口异常时兜底）
  */
 export function heuristicClassify({ content = '', attachments = [], categories = [] }) {
   const enriched = enrichAttachmentsWithContent(attachments);
@@ -95,9 +282,12 @@ export function heuristicClassify({ content = '', attachments = [], categories =
     tags.add('待办事项');
   }
 
-  // 自动为每个附件生成有意义的新文件名
   const renamedFiles = enriched.map((att, idx) => {
     const origName = att.name || `附件_${idx + 1}`;
+    // 如果前端已经自动改过名且不再是乱码名，尊重前端已改好的名字
+    if (!isMeaninglessFileName(origName) && !att.autoRenameForced) {
+      return origName;
+    }
     if (att.detectedTitle) {
       return normalizeRenamedFile(origName, att.detectedTitle);
     }
@@ -110,7 +300,6 @@ export function heuristicClassify({ content = '', attachments = [], categories =
     return origName;
   });
 
-  // 生成简明标题
   let title = '';
   const firstDetectedDocTitle = enriched.map((a) => a.detectedTitle).find(Boolean);
   if (userText) {
@@ -134,12 +323,11 @@ export function heuristicClassify({ content = '', attachments = [], categories =
     title = firstDetectedDocTitle;
   } else if (renamedFiles.length > 0) {
     const firstName = path.basename(renamedFiles[0], path.extname(renamedFiles[0]));
-    title = hasImage ? `图片：${firstName}` : `文档：${firstName}`;
+    title = hasImage ? `图片：${firstName}` : `${firstName}`;
   } else {
     title = '随手记录';
   }
 
-  // 生成摘要
   let summary = '';
   if (extractedTexts) {
     const cleanDoc = extractedTexts.replace(/\s+/g, ' ').trim();
@@ -166,84 +354,13 @@ export function heuristicClassify({ content = '', attachments = [], categories =
 }
 
 /**
- * 构建兼容各种 OpenAI 格式填法的候选请求地址
- * 无论用户填 https://api.deepseek.com 还是 https://api.deepseek.com/v1 还是完整 /chat/completions 都能兼容
- */
-export function buildOpenAIChatEndpoints(baseUrl = '') {
-  const clean = String(baseUrl || '').trim().replace(/\/+$/, '');
-  if (!clean) return [];
-  if (clean.endsWith('/chat/completions')) {
-    return [clean];
-  }
-  if (/\/v\d+(?:\/[a-z0-9_-]+)?$/i.test(clean)) {
-    return [`${clean}/chat/completions`];
-  }
-  // 如果没有带 /v1，优先尝试 /v1/chat/completions，同时把 /chat/completions 作为备选
-  return [`${clean}/v1/chat/completions`, `${clean}/chat/completions`];
-}
-
-async function callOpenAICompatibleChat({ baseUrl, apiKey, model, messages, timeoutMs = 22000 }) {
-  const endpoints = buildOpenAIChatEndpoints(baseUrl);
-  if (endpoints.length === 0) {
-    throw new Error('未配置 API Base URL');
-  }
-
-  let lastError = null;
-  for (const endpoint of endpoints) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const headers = { 'Content-Type': 'application/json' };
-      if (apiKey) {
-        headers['Authorization'] = `Bearer ${apiKey}`;
-      }
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          model: model || 'deepseek-flash',
-          temperature: 0.2,
-          messages
-        }),
-        signal: controller.signal
-      });
-      clearTimeout(timer);
-
-      if (!response.ok) {
-        const errText = await response.text().catch(() => '');
-        // 如果是 404 且还有备选 endpoint，继续尝试下一个
-        if (response.status === 404 && endpoints.indexOf(endpoint) < endpoints.length - 1) {
-          lastError = new Error(`HTTP 404 (${endpoint})`);
-          continue;
-        }
-        let friendlyMsg = `HTTP ${response.status}`;
-        try {
-          const errJson = JSON.parse(errText);
-          friendlyMsg = errJson?.error?.message || errJson?.message || friendlyMsg;
-        } catch {
-          if (errText) friendlyMsg += `: ${errText.slice(0, 160)}`;
-        }
-        throw new Error(friendlyMsg);
-      }
-
-      const data = await response.json();
-      return { data, endpoint };
-    } catch (err) {
-      clearTimeout(timer);
-      lastError = err;
-    }
-  }
-  throw lastError || new Error('请求 LLM 失败');
-}
-
-/**
- * 测试用户的 OpenAI 兼容接口连接是否正常
+ * 测试用户的 OpenAI 兼容接口连接是否正常（使用官方 openai SDK）
  */
 export async function testLlmConnection(customLlmCfg = null) {
   const config = getConfig();
   const llmCfg = customLlmCfg || config.llm || {};
   const start = Date.now();
-  const { data, endpoint } = await callOpenAICompatibleChat({
+  const { completion, usedBaseURL } = await callOpenAISdkChat({
     baseUrl: llmCfg.baseUrl,
     apiKey: llmCfg.apiKey,
     model: llmCfg.model,
@@ -252,25 +369,24 @@ export async function testLlmConnection(customLlmCfg = null) {
       { role: 'user', content: '请只回复 OK 两个字母' }
     ]
   });
-  const reply = data?.choices?.[0]?.message?.content?.trim() || 'OK';
+  const reply = completion?.choices?.[0]?.message?.content?.trim() || 'OK';
   return {
     ok: true,
     latencyMs: Date.now() - start,
-    endpoint,
-    model: data?.model || llmCfg.model,
+    endpoint: usedBaseURL,
+    model: completion?.model || llmCfg.model,
     reply
   };
 }
 
 /**
- * 调用 OpenAI 兼容接口进行语义分类、标题生成、摘要提炼、打标与附件自动重命名
+ * 使用官方 OpenAI SDK 进行语义分类、标题生成、摘要提炼、打标与附件自动重命名
  */
 export async function classifyWithLLM({ content = '', attachments = [] }) {
   const config = getConfig();
   const categories = config.categories || [];
   const llmCfg = config.llm || {};
 
-  // 先提取附件中的 PDF/文档内容
   const enriched = enrichAttachmentsWithContent(attachments);
   const fallbackResult = heuristicClassify({ content, attachments: enriched, categories });
 
@@ -291,20 +407,19 @@ export async function classifyWithLLM({ content = '', attachments = [] }) {
       }).join('\n')
     : '无附件';
 
-  const systemPrompt = `你是一个高效的个人知识库与文件整理助手。用户像使用“微信文件传输助手”一样随手丢进来一段文字、链接、截图或文件（如 PDF、文档）。
-许多上传的文件原名是乱码、数字串或无意义的名字（如 3D_138074619579.pdf、image.png）。
+  const systemPrompt = `你是一个高效的个人知识库与文件整理助手。用户随手丢进来一段文字、链接、截图或文件（如 PDF、文档）。
 请你根据【正文备注】和【提取到的文件内部文本/图像】，完成以下任务：
 1. 选出最匹配的分类目录 id（category）；
 2. 生成清晰、好搜索的中文记录标题（title，10~28字）；
 3. 提炼 30~80 字的核心内容摘要（summary）；
 4. 提取 2~5 个关键词标签（tags）；
-5. **自动重命名附件（renamedFiles）**：如果包含附件，请按附件顺序为每个附件起一个清晰、具体、便于搜索的中文新文件名（保留原文件扩展名，如 "3D产品宣传片提示词（通用版）.pdf"）。
+5. **自动重命名附件（renamedFiles）**：如果包含附件，请按附件顺序为每个附件起一个清晰、具体、便于搜索的中文新文件名（保留原扩展名，如 "3D产品宣传片提示词（通用版）.pdf"）。
 
 可选分类目录（category 必须严格返回引号内的目录 id）：
 ${categoryListDesc}
 
 ${llmCfg.customSystemPrompt ? `用户补充偏好：\n${llmCfg.customSystemPrompt}\n` : ''}
-请严格只输出合法的 JSON 对象，不要包含 Markdown 代码块包裹，格式如下：
+请严格只输出合法的 JSON 对象，格式如下：
 {
   "category": "目录id",
   "title": "清晰的中文标题",
@@ -319,11 +434,10 @@ ${content || '（用户未手写备注，请依据下方附件内容进行分析
 【上传的附件及内部提取内容】：
 ${attachmentDetails}`;
 
-  // 检查是否包含图片附件且可以尝试 OpenAI Vision 格式
   const imageAttachments = enriched.filter((a) => (a.mimeType || '').startsWith('image/') && a.dataBase64);
 
   try {
-    let data;
+    let completion;
     if (imageAttachments.length > 0) {
       try {
         const visionContent = [
@@ -337,43 +451,45 @@ ${attachmentDetails}`;
             }
           }))
         ];
-        const res = await callOpenAICompatibleChat({
+        const res = await callOpenAISdkChat({
           baseUrl: llmCfg.baseUrl,
           apiKey: llmCfg.apiKey,
           model: llmCfg.model,
+          jsonMode: true,
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: visionContent }
           ]
         });
-        data = res.data;
+        completion = res.completion;
       } catch {
-        // 如果当前模型不支持 Vision image_url，自动降级为纯文本请求
-        const res = await callOpenAICompatibleChat({
+        const res = await callOpenAISdkChat({
           baseUrl: llmCfg.baseUrl,
           apiKey: llmCfg.apiKey,
           model: llmCfg.model,
+          jsonMode: true,
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userTextPrompt }
           ]
         });
-        data = res.data;
+        completion = res.completion;
       }
     } else {
-      const res = await callOpenAICompatibleChat({
+      const res = await callOpenAISdkChat({
         baseUrl: llmCfg.baseUrl,
         apiKey: llmCfg.apiKey,
         model: llmCfg.model,
+        jsonMode: true,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userTextPrompt }
         ]
       });
-      data = res.data;
+      completion = res.completion;
     }
 
-    const rawReply = data?.choices?.[0]?.message?.content || '';
+    const rawReply = completion?.choices?.[0]?.message?.content || '';
     const jsonMatch = rawReply.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
       throw new Error('LLM 未返回有效 JSON 结构');

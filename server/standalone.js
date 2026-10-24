@@ -14,7 +14,7 @@ import {
   renameAttachment,
   openInExplorer
 } from './vault-manager.js';
-import { classifyWithLLM, heuristicClassify, testLlmConnection } from './llm-classifier.js';
+import { classifyWithLLM, heuristicClassify, testLlmConnection, smartRenameUploadedFile } from './llm-classifier.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -150,6 +150,11 @@ export function startStandaloneServer(port = 1420, openWindow = false) {
         if (url.pathname === '/api/llm/test' && req.method === 'POST') {
           const body = await readJsonBody(req);
           const result = await testLlmConnection(body.llm);
+          return sendJson(res, 200, result);
+        }
+        if (url.pathname === '/api/files/smart-rename' && req.method === 'POST') {
+          const body = await readJsonBody(req);
+          const result = await smartRenameUploadedFile(body.attachment || {}, body.noteText || '');
           return sendJson(res, 200, result);
         }
         if (url.pathname === '/api/memos/quick-save' && req.method === 'POST') {
