@@ -241,6 +241,7 @@ export function startStandaloneServer(port = 1420, openWindow = false) {
         '.ico': 'image/x-icon'
       }[ext] || 'application/octet-stream';
       res.setHeader('Content-Type', mime);
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
       fs.createReadStream(targetFile).pipe(res);
     } else {
       res.statusCode = 404;

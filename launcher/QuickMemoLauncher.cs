@@ -22,6 +22,17 @@ namespace QuickMemo
     {
         #region Win32 API
 
+        private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+        [DllImport("user32.dll")]
+        private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern int GetClassName(IntPtr hWnd, System.Text.StringBuilder lpClassName, int nMaxCount);
+
         [DllImport("user32.dll")]
         private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
 
@@ -253,22 +264,35 @@ namespace QuickMemo
                 return _targetHwnd;
             }
 
-            foreach (var proc in Process.GetProcesses())
+            IntPtr found = IntPtr.Zero;
+            EnumWindows((hWnd, lParam) =>
             {
-                try
+                var sb = new System.Text.StringBuilder(256);
+                if (GetWindowText(hWnd, sb, sb.Capacity) > 0)
                 {
-                    if (proc.MainWindowHandle != IntPtr.Zero &&
-                        proc.MainWindowTitle != null &&
-                        proc.MainWindowTitle.Contains("QuickMemo"))
+                    string title = sb.ToString();
+                    if (title.Contains("QuickMemo · 闪念") || title.StartsWith("QuickMemo"))
                     {
-                        _targetHwnd = proc.MainWindowHandle;
-                        _wasWindowAlive = true;
-                        return _targetHwnd;
+                        var cls = new System.Text.StringBuilder(128);
+                        GetClassName(hWnd, cls, cls.Capacity);
+                        string clsName = cls.ToString();
+                        // 匹配 Edge/Chrome App 顶层窗口 (Chrome_WidgetWin_1)
+                        if (clsName.Contains("Chrome_WidgetWin"))
+                        {
+                            found = hWnd;
+                            return false; // stop enumerating
+                        }
                     }
                 }
-                catch { }
+                return true;
+            }, IntPtr.Zero);
+
+            if (found != IntPtr.Zero)
+            {
+                _targetHwnd = found;
+                _wasWindowAlive = true;
             }
-            return IntPtr.Zero;
+            return found;
         }
 
         private void ForceForeground(IntPtr hwnd)
