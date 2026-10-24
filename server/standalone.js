@@ -15,6 +15,14 @@ import {
   openInExplorer
 } from './vault-manager.js';
 import { classifyWithLLM, heuristicClassify, testLlmConnection, smartRenameUploadedFile } from './llm-classifier.js';
+import {
+  ensureDocIndexSynced,
+  rebuildDocIndex,
+  getDocIndexStatus,
+  indexSingleMemo,
+  removeMemoFromDocIndex
+} from './doc-indexer.js';
+import { askVaultAssistant } from './chat-assistant.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -109,6 +117,14 @@ function sendJson(res, status, data) {
 export function startStandaloneServer(port = 1420, openWindow = false) {
   ensureTauriIcons();
   getConfig(); // 初始化默认配置和 vault 分类目录
+  setTimeout(() => {
+    try {
+      const st = getDocIndexStatus();
+      console.log(`[QuickMemo] 全文文档索引已就绪: ${st.totalDocs} 篇记录, ${st.totalChunks} 个检索片段`);
+    } catch (e) {
+      console.warn('[QuickMemo] 初始化文档索引失败:', e.message);
+    }
+  }, 100);
 
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url || '/', `http://localhost:${port}`);
@@ -197,6 +213,9 @@ export function startStandaloneServer(port = 1420, openWindow = false) {
             tags: classification.tags,
             aiClassified: classification.aiClassified
           });
+          try {
+            indexSingleMemo(saved);
+          } catch {}
 
           return sendJson(res, 200, { memo: saved, classification });
         }
@@ -233,21 +252,48 @@ export function startStandaloneServer(port = 1420, openWindow = false) {
             tags: classification.tags,
             aiClassified: classification.aiClassified
           });
+          try {
+            indexSingleMemo(updated);
+          } catch {}
           return sendJson(res, 200, { memo: updated, classification });
         }
         if (url.pathname === '/api/memos/update' && req.method === 'POST') {
           const body = await readJsonBody(req);
           const updated = updateMemo(body.id, body.patch || {});
+          try {
+            indexSingleMemo(updated);
+          } catch {}
           return sendJson(res, 200, { memo: updated });
         }
         if (url.pathname === '/api/memos/rename-attachment' && req.method === 'POST') {
           const body = await readJsonBody(req);
           const updated = renameAttachment(body.id, Number(body.attIndex), body.newName);
+          try {
+            indexSingleMemo(updated);
+          } catch {}
           return sendJson(res, 200, { memo: updated });
         }
         if (url.pathname === '/api/memos/delete' && req.method === 'POST') {
           const body = await readJsonBody(req);
-          return sendJson(res, 200, deleteMemo(body.id));
+          const delRes = deleteMemo(body.id);
+          try {
+            removeMemoFromDocIndex(body.id);
+          } catch {}
+          return sendJson(res, 200, delRes);
+        }
+        if (url.pathname === '/api/index/status' && req.method === 'GET') {
+          return sendJson(res, 200, getDocIndexStatus());
+        }
+        if (url.pathname === '/api/index/rebuild' && req.method === 'POST') {
+          return sendJson(res, 200, rebuildDocIndex());
+        }
+        if (url.pathname === '/api/chat/ask' && req.method === 'POST') {
+          const body = await readJsonBody(req);
+          const answer = await askVaultAssistant({
+            message: body.message || '',
+            history: body.history || []
+          });
+          return sendJson(res, 200, answer);
         }
         if (url.pathname === '/api/open-explorer' && req.method === 'POST') {
           const body = await readJsonBody(req);

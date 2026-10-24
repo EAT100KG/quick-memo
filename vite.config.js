@@ -12,6 +12,13 @@ import {
   openInExplorer
 } from './server/vault-manager.js';
 import { classifyWithLLM, heuristicClassify, testLlmConnection, smartRenameUploadedFile } from './server/llm-classifier.js';
+import {
+  rebuildDocIndex,
+  getDocIndexStatus,
+  indexSingleMemo,
+  removeMemoFromDocIndex
+} from './server/doc-indexer.js';
+import { askVaultAssistant } from './server/chat-assistant.js';
 
 function readJsonBody(req) {
   return new Promise((resolve, reject) => {
@@ -171,7 +178,25 @@ function quickMemoLocalServerPlugin() {
           }
           if (url.pathname === '/api/memos/delete' && req.method === 'POST') {
             const body = await readJsonBody(req);
-            return sendJson(res, 200, deleteMemo(body.id));
+            const delRes = deleteMemo(body.id);
+            try {
+              removeMemoFromDocIndex(body.id);
+            } catch {}
+            return sendJson(res, 200, delRes);
+          }
+          if (url.pathname === '/api/index/status' && req.method === 'GET') {
+            return sendJson(res, 200, getDocIndexStatus());
+          }
+          if (url.pathname === '/api/index/rebuild' && req.method === 'POST') {
+            return sendJson(res, 200, rebuildDocIndex());
+          }
+          if (url.pathname === '/api/chat/ask' && req.method === 'POST') {
+            const body = await readJsonBody(req);
+            const answer = await askVaultAssistant({
+              message: body.message || '',
+              history: body.history || []
+            });
+            return sendJson(res, 200, answer);
           }
           if (url.pathname === '/api/open-explorer' && req.method === 'POST') {
             const body = await readJsonBody(req);

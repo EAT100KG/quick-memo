@@ -52,7 +52,7 @@ export function buildCandidateBaseURLs(rawBaseUrl = '') {
 /**
  * 使用官方 openai Node.js SDK 调用兼容接口（自动处理 baseURL 回退与 JSON Mode 兼容）
  */
-async function callOpenAISdkChat({ baseUrl, apiKey, model, messages, jsonMode = false, timeoutMs = 20000 }) {
+export async function callOpenAISdkChat({ baseUrl, apiKey, model, messages, jsonMode = false, timeoutMs = 20000 }) {
   const candidates = buildCandidateBaseURLs(baseUrl);
   if (candidates.length === 0) {
     throw new Error('未配置 API Base URL');

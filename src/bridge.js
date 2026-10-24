@@ -330,5 +330,22 @@ export const Bridge = {
       method: 'POST',
       body: JSON.stringify({ attachment, noteText })
     });
+  },
+
+  async getIndexStatus() {
+    return apiRequest('/api/index/status');
+  },
+
+  async rebuildIndex() {
+    return apiRequest('/api/index/rebuild', {
+      method: 'POST'
+    });
+  },
+
+  async askChat(message, history = []) {
+    return apiRequest('/api/chat/ask', {
+      method: 'POST',
+      body: JSON.stringify({ message, history })
+    });
   }
 };

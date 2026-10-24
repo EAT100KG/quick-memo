@@ -64,7 +64,21 @@ const state = {
   searchQuery: '',
   activeMemoId: null,
   isEditingDetail: false,
-  pdfModal: null // { title, url }
+  pdfModal: null, // { title, url }
+
+  // 聊天泡泡与全文文档索引状态
+  chatOpen: false,
+  chatDraft: '',
+  chatLoading: false,
+  rebuildingIndex: false,
+  indexStats: {
+    totalDocs: 0,
+    totalChunks: 0,
+    totalAttachmentFiles: 0,
+    totalChars: 0,
+    lastIndexedAt: ''
+  },
+  chatMessages: [] // [{ id, role: 'user'|'assistant', content, sources, aiUsed, errorWarning, time }]
 };
 
 function isPdfAttachment(att = {}) {
@@ -81,6 +95,19 @@ function escapeHtml(str = '') {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+function formatChatMarkdown(raw = '') {
+  const escaped = escapeHtml(raw);
+  return escaped
+    .replace(/^###\s+(.+)$/gm, '<div class="chat-md-h3">$1</div>')
+    .replace(/^##\s+(.+)$/gm, '<div class="chat-md-h2">$1</div>')
+    .replace(/^#\s+(.+)$/gm, '<div class="chat-md-h2">$1</div>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/`([^`\n]+)`/g, '<code class="chat-inline-code">$1</code>')
+    .replace(/^&gt;\s*(.+)$/gm, '<blockquote class="chat-quote">$1</blockquote>')
+    .replace(/^\s*[-*]\s+(.+)$/gm, '<div class="chat-md-li">• $1</div>')
+    .replace(/\r?\n/g, '<br/>');
 }
 
 function formatSize(bytes = 0) {
@@ -155,12 +182,16 @@ async function init() {
   state.loading = true;
   render();
   try {
-    const [config, memos] = await Promise.all([
+    const [config, memos, indexStats] = await Promise.all([
       Bridge.getConfig(),
-      Bridge.listMemos()
+      Bridge.listMemos(),
+      Bridge.getIndexStatus().catch(() => null)
     ]);
     state.config = config;
     state.memos = memos;
+    if (indexStats) {
+      state.indexStats = indexStats;
+    }
     if (memos.length > 0) {
       state.activeMemoId = memos[0].id;
     }
@@ -171,6 +202,16 @@ async function init() {
     render();
     focusCaptureInput();
   }
+}
+
+async function refreshIndexStats() {
+  try {
+    const st = await Bridge.getIndexStatus();
+    if (st) {
+      state.indexStats = st;
+      render();
+    }
+  } catch {}
 }
 
 function focusCaptureInput() {
@@ -208,6 +249,7 @@ async function handleSubmitCapture() {
       classification: res.classification,
       time: Date.now()
     };
+    refreshIndexStats();
   } catch (err) {
     alert(`保存失败：${err.message}`);
   } finally {
@@ -755,6 +797,209 @@ function renderSettingsView() {
   `;
 }
 
+function focusChatInput() {
+  setTimeout(() => {
+    const el = document.getElementById('chat-composer-input');
+    if (el) el.focus();
+    const listEl = document.getElementById('chat-messages-scroll');
+    if (listEl) listEl.scrollTop = listEl.scrollHeight;
+  }, 30);
+}
+
+async function handleSendChatMessage(overrideText = '') {
+  const text = (overrideText || state.chatDraft || '').trim();
+  if (!text || state.chatLoading) return;
+
+  const userMsg = {
+    id: `msg_${Date.now()}_u`,
+    role: 'user',
+    content: text,
+    time: new Date().toTimeString().slice(0, 5)
+  };
+
+  const historyForApi = state.chatMessages.slice(-6).map((m) => ({
+    role: m.role,
+    content: m.content
+  }));
+
+  state.chatMessages.push(userMsg);
+  state.chatDraft = '';
+  state.chatLoading = true;
+  render();
+  focusChatInput();
+
+  try {
+    const res = await Bridge.askChat(text, historyForApi);
+    if (res.stats) {
+      state.indexStats = res.stats;
+    }
+    state.chatMessages.push({
+      id: `msg_${Date.now()}_a`,
+      role: 'assistant',
+      content: res.reply || '已完成检索。',
+      sources: res.sources || [],
+      aiUsed: Boolean(res.aiUsed),
+      errorWarning: res.errorWarning || '',
+      time: new Date().toTimeString().slice(0, 5)
+    });
+  } catch (err) {
+    state.chatMessages.push({
+      id: `msg_${Date.now()}_err`,
+      role: 'assistant',
+      content: `⚠️ 检索问答出错：${err.message}`,
+      sources: [],
+      aiUsed: false,
+      time: new Date().toTimeString().slice(0, 5)
+    });
+  } finally {
+    state.chatLoading = false;
+    render();
+    focusChatInput();
+  }
+}
+
+function renderChatBubbleWidget() {
+  const st = state.indexStats || { totalDocs: state.memos.length, totalChunks: 0 };
+  const docCount = st.totalDocs || state.memos.length;
+  const chunkCount = st.totalChunks || docCount;
+
+  const examplePrompts = [
+    '帮我找一下 3D 产品宣传片相关的 PDF',
+    '3D 宣传片提示词里用到了哪些软件和步骤？',
+    '我保存过哪些关于 Tauri 的网址链接？',
+    '盘点一下我收纳盒里保存的所有文件和笔记'
+  ];
+
+  return `
+    <!-- 悬浮聊天泡泡与对话式寻物面板 -->
+    <div class="chat-widget-root">
+      ${state.chatOpen ? `
+        <aside class="chat-panel" id="chat-panel">
+          <div class="chat-panel-header">
+            <div class="chat-header-left">
+              <div class="chat-avatar-badge">💬</div>
+              <div>
+                <div class="chat-panel-title">闪念寻物助手</div>
+                <div class="chat-index-meta" title="最后索引时间: ${escapeHtml(st.lastIndexedAt || '刚刚')}">
+                  📚 已索引 <strong>${docCount}</strong> 篇文档 · <strong>${chunkCount}</strong> 个全文片段
+                </div>
+              </div>
+            </div>
+
+            <div class="chat-header-actions">
+              <button class="chat-icon-btn" id="btn-rebuild-doc-index" title="重新扫描所有 Markdown 与 PDF/Word 附件建立全文索引" ${state.rebuildingIndex ? 'disabled' : ''}>
+                ${state.rebuildingIndex ? '⏳ 索引中' : '🔄 重建索引'}
+              </button>
+              ${state.chatMessages.length > 0 ? `
+                <button class="chat-icon-btn" id="btn-clear-chat" title="清空当前聊天记录">🗑️ 清空</button>
+              ` : ''}
+              <button class="chat-close-btn" id="btn-close-chat-panel" title="收起聊天泡泡">✕</button>
+            </div>
+          </div>
+
+          <div class="chat-messages-scroll" id="chat-messages-scroll">
+            ${state.chatMessages.length === 0 ? `
+              <div class="chat-empty-state">
+                <div class="chat-empty-hero">✦ 用对话找回你随手存下的任何东西</div>
+                <p class="chat-empty-desc">
+                  已为你的笔记、链接及 <strong>PDF / Word 附件内部正文</strong> 建立全文索引。直接问我关键词、文档细节或模糊印象即可：
+                </p>
+                <div class="chat-prompt-chips">
+                  ${examplePrompts.map((p) => `
+                    <button class="chat-prompt-chip" data-chat-prompt="${escapeHtml(p)}">
+                      <span>💬 ${escapeHtml(p)}</span>
+                      <span class="chip-arrow">→</span>
+                    </button>
+                  `).join('')}
+                </div>
+              </div>
+            ` : state.chatMessages.map((msg) => `
+              <div class="chat-msg-row ${msg.role === 'user' ? 'is-user' : 'is-assistant'}">
+                <div class="chat-msg-bubble">
+                  <div class="chat-msg-content">${formatChatMarkdown(msg.content)}</div>
+
+                  ${msg.role === 'assistant' && Array.isArray(msg.sources) && msg.sources.length > 0 ? `
+                    <div class="chat-sources-box">
+                      <div class="chat-sources-label">📎 命中的本地文档与附件 (${msg.sources.length})</div>
+                      <div class="chat-sources-list">
+                        ${msg.sources.slice(0, 3).map((src) => `
+                          <div class="chat-source-card">
+                            <div class="chat-source-top">
+                              <span class="chat-source-title">📄 ${escapeHtml(src.title)}</span>
+                              <span class="chat-source-cat">${escapeHtml(src.category)}</span>
+                            </div>
+                            <div class="chat-source-snippet">
+                              <span class="source-loc-tag">${escapeHtml(src.sourceLabel || '文档片段')}</span>
+                              ${escapeHtml(src.snippet || '')}
+                            </div>
+                            <div class="chat-source-actions">
+                              <button class="mini-btn primary" data-chat-jump-memo="${escapeHtml(src.memoId)}">📄 查看记录</button>
+                              ${src.pdfAttachment ? `
+                                <button
+                                  class="mini-btn"
+                                  data-open-pdf-modal="${escapeHtml(Bridge.getAssetUrl(src.pdfAttachment.absPath))}"
+                                  data-pdf-title="${escapeHtml(src.pdfAttachment.name)}"
+                                >📕 预览 PDF</button>
+                              ` : ''}
+                              ${src.mdAbsPath ? `
+                                <button class="mini-btn" data-open-md="${escapeHtml(src.mdAbsPath)}">📂 打开位置</button>
+                              ` : ''}
+                            </div>
+                          </div>
+                        `).join('')}
+                      </div>
+                    </div>
+                  ` : ''}
+
+                  <div class="chat-msg-footer">
+                    <span>${escapeHtml(msg.time || '')}</span>
+                    ${msg.role === 'assistant' ? `
+                      <span class="chat-engine-tag">
+                        ${msg.aiUsed ? '✨ LLM + 全文索引回答' : '⚡ 本地全文索引直达'}
+                      </span>
+                    ` : ''}
+                  </div>
+                </div>
+              </div>
+            `).join('')}
+
+            ${state.chatLoading ? `
+              <div class="chat-msg-row is-assistant">
+                <div class="chat-msg-bubble loading-bubble">
+                  <span class="pulse-dot"></span>
+                  <span>正在检索本地文档索引与 PDF 内部段落...</span>
+                </div>
+              </div>
+            ` : ''}
+          </div>
+
+          <div class="chat-composer">
+            <textarea
+              id="chat-composer-input"
+              class="chat-composer-input"
+              rows="2"
+              placeholder="输入你想找的文件、提示词或笔记内容... (Enter 发送，Shift+Enter 换行)"
+            >${escapeHtml(state.chatDraft)}</textarea>
+            <button class="chat-send-btn" id="btn-send-chat" ${state.chatLoading ? 'disabled' : ''}>
+              ${state.chatLoading ? '...' : '发送 ↑'}
+            </button>
+          </div>
+        </aside>
+      ` : ''}
+
+      <button
+        class="chat-floating-bubble ${state.chatOpen ? 'is-open' : ''}"
+        id="btn-toggle-chat-bubble"
+        title="打开闪念寻物聊天助手 (快捷键 Alt+3)"
+      >
+        <span class="bubble-icon">${state.chatOpen ? '✕' : '💬'}</span>
+        <span class="bubble-label">${state.chatOpen ? '收起寻物助手' : '对话找文档'}</span>
+        ${!state.chatOpen ? `<span class="bubble-index-pill">已索引 ${docCount}</span>` : ''}
+      </button>
+    </div>
+  `;
+}
+
 export function render() {
   const app = document.getElementById('app');
   if (!app) return;
@@ -777,6 +1022,7 @@ export function render() {
     <div class="app-container">
       ${renderHeader()}
       ${bodyHtml}
+      ${renderChatBubbleWidget()}
       ${state.pdfModal ? `
         <div class="pdf-modal-backdrop" id="pdf-modal-backdrop">
           <div class="pdf-modal-window">
@@ -1286,9 +1532,99 @@ function bindEvents() {
       });
       state.config = saved;
       state.memos = await Bridge.listMemos();
+      refreshIndexStats();
       btnSaveSettings.textContent = '✅ 设置已保存生效';
       setTimeout(() => render(), 800);
     });
+  }
+
+  // 聊天泡泡与寻物助手事件绑定
+  const btnToggleChat = document.getElementById('btn-toggle-chat-bubble');
+  if (btnToggleChat) {
+    btnToggleChat.addEventListener('click', () => {
+      state.chatOpen = !state.chatOpen;
+      render();
+      if (state.chatOpen) {
+        focusChatInput();
+        refreshIndexStats();
+      }
+    });
+  }
+
+  const btnCloseChat = document.getElementById('btn-close-chat-panel');
+  if (btnCloseChat) {
+    btnCloseChat.addEventListener('click', () => {
+      state.chatOpen = false;
+      render();
+    });
+  }
+
+  const btnClearChat = document.getElementById('btn-clear-chat');
+  if (btnClearChat) {
+    btnClearChat.addEventListener('click', () => {
+      state.chatMessages = [];
+      render();
+      focusChatInput();
+    });
+  }
+
+  const btnRebuildIndex = document.getElementById('btn-rebuild-doc-index');
+  if (btnRebuildIndex) {
+    btnRebuildIndex.addEventListener('click', async () => {
+      if (state.rebuildingIndex) return;
+      state.rebuildingIndex = true;
+      render();
+      try {
+        const stats = await Bridge.rebuildIndex();
+        state.indexStats = stats;
+      } catch (err) {
+        alert(`重建索引失败：${err.message}`);
+      } finally {
+        state.rebuildingIndex = false;
+        render();
+        focusChatInput();
+      }
+    });
+  }
+
+  document.querySelectorAll('[data-chat-prompt]').forEach((chip) => {
+    chip.addEventListener('click', () => {
+      const prompt = chip.getAttribute('data-chat-prompt');
+      if (prompt) {
+        handleSendChatMessage(prompt);
+      }
+    });
+  });
+
+  document.querySelectorAll('[data-chat-jump-memo]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const memoId = btn.getAttribute('data-chat-jump-memo');
+      state.activeMemoId = memoId;
+      state.selectedCategory = 'ALL';
+      state.selectedType = 'all';
+      state.selectedTag = '';
+      state.searchQuery = '';
+      state.activeTab = 'vault';
+      render();
+    });
+  });
+
+  const chatInput = document.getElementById('chat-composer-input');
+  if (chatInput) {
+    chatInput.addEventListener('input', (e) => {
+      state.chatDraft = e.target.value;
+    });
+    chatInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        handleSendChatMessage();
+      }
+    });
+  }
+
+  const btnSendChat = document.getElementById('btn-send-chat');
+  if (btnSendChat) {
+    btnSendChat.addEventListener('click', () => handleSendChatMessage());
   }
 }
 
@@ -1303,10 +1639,20 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     state.activeTab = 'vault';
     render();
+  } else if (e.altKey && e.key === '3') {
+    e.preventDefault();
+    state.chatOpen = !state.chatOpen;
+    render();
+    if (state.chatOpen) focusChatInput();
   } else if (e.key === 'Escape') {
     e.preventDefault();
     if (state.pdfModal) {
       state.pdfModal = null;
+      render();
+      return;
+    }
+    if (state.chatOpen) {
+      state.chatOpen = false;
       render();
       return;
     }
