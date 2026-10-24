@@ -143,8 +143,7 @@ function quickMemoLocalServerPlugin() {
               name: (classification.renamedFiles && classification.renamedFiles[idx]) || att.name
             }));
 
-            const autoContent = (body.content || '').trim() ||
-              (classification.extractedPreview ? `### 📄 文档内容提取预览\n\n${classification.extractedPreview}` : '');
+            const autoContent = (body.content || '').trim();
 
             const saved = saveMemo({
               content: autoContent,

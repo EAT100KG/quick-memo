@@ -920,10 +920,15 @@ body {
   background: #fff;
 }
 
-.editor-save-bar {
-  margin-top: 8px;
-  display: flex;
-  justify-content: flex-end;
+.detail-readonly-body {
+  background: #f8fafc;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-size: 13.5px;
+  line-height: 1.65;
+  color: var(--text-main);
+  word-break: break-word;
 }
 
 .detail-att-list {

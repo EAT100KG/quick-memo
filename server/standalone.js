@@ -217,8 +217,7 @@ export function startStandaloneServer(port = 1420, openWindow = false) {
             name: (classification.renamedFiles && classification.renamedFiles[idx]) || att.name
           }));
 
-          const autoContent = (body.content || '').trim() ||
-            (classification.extractedPreview ? `### 📄 文档内容提取预览\n\n${classification.extractedPreview}` : '');
+          const autoContent = (body.content || '').trim();
 
           const saved = saveMemo({
             content: autoContent,
@@ -258,8 +257,7 @@ export function startStandaloneServer(port = 1420, openWindow = false) {
             }
           }
 
-          const nextContent = (target.content || '').trim() ||
-            (classification.extractedPreview ? `### 📄 文档内容提取预览\n\n${classification.extractedPreview}` : '');
+          const nextContent = (target.content || '').replace(/^### 📄 文档内容提取预览[\s\S]*$/, '').trim();
 
           const updated = updateMemo(target.id, {
             category: classification.category,

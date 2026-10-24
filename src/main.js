@@ -794,13 +794,13 @@ function renderMemoDetail(memo) {
           </div>
         ` : ''}
 
-        <div class="detail-content-section">
-          <div class="section-caption">原始记录 / 文档提取文本（可直接编辑并保存）</div>
-          <textarea id="detail-content-textarea" class="detail-content-editor" rows="8">${escapeHtml(memo.content || '')}</textarea>
-          <div class="editor-save-bar">
-            <button class="mini-btn primary" id="btn-save-detail-edit" data-id="${escapeHtml(memo.id)}">💾 保存修改到本地 Markdown</button>
-          </div>
-        </div>
+        ${(() => {
+          const cleanBody = String(memo.content || '').replace(/^### 📄 文档内容提取预览[\s\S]*$/, '').trim();
+          if (!cleanBody) return '';
+          return `
+            <div class="detail-readonly-body">${formatChatMarkdown(cleanBody)}</div>
+          `;
+        })()}
       </div>
     </div>
   `;
@@ -1738,15 +1738,23 @@ function bindEvents() {
     });
   }
 
-  const btnSaveDetailEdit = document.getElementById('btn-save-detail-edit');
-  if (btnSaveDetailEdit) {
-    btnSaveDetailEdit.addEventListener('click', async () => {
-      const id = btnSaveDetailEdit.getAttribute('data-id');
-      const newTitle = document.getElementById('detail-title-input')?.value || '';
-      const newContent = document.getElementById('detail-content-textarea')?.value || '';
-      const res = await Bridge.updateMemo(id, { title: newTitle, content: newContent });
+  const detailTitleInput = document.getElementById('detail-title-input');
+  if (detailTitleInput) {
+    const saveTitleChange = async () => {
+      const id = detailCatSelect?.getAttribute('data-memo-id');
+      const newTitle = detailTitleInput.value.trim();
+      const currentMemo = state.memos.find((m) => m.id === id);
+      if (!id || !newTitle || !currentMemo || currentMemo.title === newTitle) return;
+      const res = await Bridge.updateMemo(id, { title: newTitle });
       state.memos = state.memos.map((m) => (m.id === id ? res.memo : m));
       render();
+    };
+    detailTitleInput.addEventListener('blur', saveTitleChange);
+    detailTitleInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        detailTitleInput.blur();
+      }
     });
   }
 
