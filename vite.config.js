@@ -61,6 +61,9 @@ function quickMemoLocalServerPlugin() {
             '.pdf': 'application/pdf'
           };
           res.setHeader('Content-Type', mimeMap[ext] || 'application/octet-stream');
+          if (ext === '.pdf') {
+            res.setHeader('Content-Disposition', 'inline');
+          }
           fs.createReadStream(filePath).pipe(res);
           return;
         }

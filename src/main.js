@@ -63,8 +63,17 @@ const state = {
   selectedTag: '',
   searchQuery: '',
   activeMemoId: null,
-  isEditingDetail: false
+  isEditingDetail: false,
+  pdfModal: null // { title, url }
 };
+
+function isPdfAttachment(att = {}) {
+  return (
+    (att.mimeType || '').toLowerCase() === 'application/pdf' ||
+    String(att.name || '').toLowerCase().endsWith('.pdf') ||
+    String(att.absPath || '').toLowerCase().endsWith('.pdf')
+  );
+}
 
 function escapeHtml(str = '') {
   return String(str)
@@ -331,7 +340,7 @@ function renderCaptureView() {
               <div class="draft-att-chip">
                 ${att.mimeType.startsWith('image/')
                   ? `<img src="${att.dataBase64}" class="draft-att-thumb" alt="${escapeHtml(att.name)}" />`
-                  : `<span class="draft-att-icon">📎</span>`
+                  : `<span class="draft-att-icon">${isPdfAttachment(att) ? '📕' : '📎'}</span>`
                 }
                 <div class="draft-att-info">
                   <input
@@ -349,6 +358,9 @@ function renderCaptureView() {
                         : `${formatSize(att.size)} · 点击上方文件名可直接改名`}
                   </div>
                 </div>
+                ${isPdfAttachment(att) ? `
+                  <button class="mini-btn" data-preview-draft-pdf="${att.id}" title="预览此 PDF">👁️ 预览</button>
+                ` : ''}
                 <button class="draft-att-remove" data-remove-att="${att.id}" title="移除附件">×</button>
               </div>
             `).join('')}
@@ -604,45 +616,57 @@ function renderMemoDetail(memo) {
           ${(memo.tags || []).map((t) => `<span class="tag-pill">#${escapeHtml(t)}</span>`).join('')}
         </div>
 
+        ${memo.attachments && memo.attachments.length > 0 ? `
+          <div class="detail-attachments-section">
+            <div class="section-caption">归档附件与预览 (${memo.attachments.length}) · 可直接重命名文件方便搜索</div>
+            <div class="detail-att-list">
+              ${memo.attachments.map((att, attIdx) => {
+                const isPdf = isPdfAttachment(att);
+                const assetUrl = Bridge.getAssetUrl(att.absPath);
+                return `
+                  <div class="detail-att-card">
+                    <div class="detail-att-bar">
+                      <div class="detail-att-rename-group">
+                        <span>${isPdf ? '📕' : '📎'}</span>
+                        <input
+                          type="text"
+                          class="detail-att-name-input"
+                          id="att-rename-input-${attIdx}"
+                          value="${escapeHtml(att.name)}"
+                          title="修改文件名并点右侧‘重命名’同步更新磁盘文件"
+                        />
+                        <span class="att-size-label">(${formatSize(att.size)})</span>
+                      </div>
+                      <div class="detail-att-btns">
+                        <button class="mini-btn primary" data-rename-att-idx="${attIdx}" data-memo-id="${escapeHtml(memo.id)}">✏️ 重命名文件</button>
+                        ${isPdf ? `
+                          <button class="mini-btn" data-open-pdf-modal="${escapeHtml(assetUrl)}" data-pdf-title="${escapeHtml(att.name)}">🔍 全屏预览 PDF</button>
+                        ` : ''}
+                        <button class="mini-btn" data-open-md="${escapeHtml(att.absPath)}">打开所在位置</button>
+                      </div>
+                    </div>
+                    ${(att.mimeType || '').startsWith('image/') ? `
+                      <img src="${assetUrl}" class="detail-image-preview" alt="${escapeHtml(att.name)}" />
+                    ` : ''}
+                    ${isPdf ? `
+                      <div class="detail-pdf-wrap">
+                        <iframe src="${assetUrl}" class="detail-pdf-iframe" title="${escapeHtml(att.name)}"></iframe>
+                      </div>
+                    ` : ''}
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          </div>
+        ` : ''}
+
         <div class="detail-content-section">
-          <div class="section-caption">原始记录内容（可直接编辑并保存）</div>
-          <textarea id="detail-content-textarea" class="detail-content-editor" rows="10">${escapeHtml(memo.content || '')}</textarea>
+          <div class="section-caption">原始记录 / 文档提取文本（可直接编辑并保存）</div>
+          <textarea id="detail-content-textarea" class="detail-content-editor" rows="8">${escapeHtml(memo.content || '')}</textarea>
           <div class="editor-save-bar">
             <button class="mini-btn primary" id="btn-save-detail-edit" data-id="${escapeHtml(memo.id)}">💾 保存修改到本地 Markdown</button>
           </div>
         </div>
-
-        ${memo.attachments && memo.attachments.length > 0 ? `
-          <div class="detail-attachments-section">
-            <div class="section-caption">归档附件 (${memo.attachments.length}) · 可直接重命名文件方便搜索</div>
-            <div class="detail-att-list">
-              ${memo.attachments.map((att, attIdx) => `
-                <div class="detail-att-card">
-                  ${(att.mimeType || '').startsWith('image/') ? `
-                    <img src="${Bridge.getAssetUrl(att.absPath)}" class="detail-image-preview" alt="${escapeHtml(att.name)}" />
-                  ` : ''}
-                  <div class="detail-att-bar">
-                    <div class="detail-att-rename-group">
-                      <span>📎</span>
-                      <input
-                        type="text"
-                        class="detail-att-name-input"
-                        id="att-rename-input-${attIdx}"
-                        value="${escapeHtml(att.name)}"
-                        title="修改文件名并点右侧‘重命名’同步更新磁盘文件"
-                      />
-                      <span class="att-size-label">(${formatSize(att.size)})</span>
-                    </div>
-                    <div class="detail-att-btns">
-                      <button class="mini-btn primary" data-rename-att-idx="${attIdx}" data-memo-id="${escapeHtml(memo.id)}">✏️ 重命名文件</button>
-                      <button class="mini-btn" data-open-md="${escapeHtml(att.absPath)}">打开所在位置</button>
-                    </div>
-                  </div>
-                </div>
-              `).join('')}
-            </div>
-          </div>
-        ` : ''}
       </div>
     </div>
   `;
@@ -753,6 +777,17 @@ export function render() {
     <div class="app-container">
       ${renderHeader()}
       ${bodyHtml}
+      ${state.pdfModal ? `
+        <div class="pdf-modal-backdrop" id="pdf-modal-backdrop">
+          <div class="pdf-modal-window">
+            <div class="pdf-modal-header">
+              <div class="pdf-modal-title">📕 ${escapeHtml(state.pdfModal.title || 'PDF 预览')}</div>
+              <button class="ghost-btn" id="btn-close-pdf-modal">✕ 关闭预览 (Esc)</button>
+            </div>
+            <iframe src="${escapeHtml(state.pdfModal.url)}" class="pdf-modal-iframe" title="PDF Preview"></iframe>
+          </div>
+        </div>
+      ` : ''}
     </div>
   `;
 
@@ -934,6 +969,49 @@ function bindEvents() {
       Bridge.openInExplorer(btn.getAttribute('data-open-md'));
     });
   });
+
+  // 全屏预览已归档 PDF
+  document.querySelectorAll('[data-open-pdf-modal]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.pdfModal = {
+        url: btn.getAttribute('data-open-pdf-modal'),
+        title: btn.getAttribute('data-pdf-title') || 'PDF 文档预览'
+      };
+      render();
+    });
+  });
+
+  // 预览草稿箱中刚拖入的 PDF
+  document.querySelectorAll('[data-preview-draft-pdf]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const id = btn.getAttribute('data-preview-draft-pdf');
+      const att = state.draftAttachments.find((a) => a.id === id);
+      if (!att || !att.dataBase64) return;
+      state.pdfModal = {
+        url: att.dataBase64,
+        title: att.name
+      };
+      render();
+    });
+  });
+
+  const btnClosePdfModal = document.getElementById('btn-close-pdf-modal');
+  if (btnClosePdfModal) {
+    btnClosePdfModal.addEventListener('click', () => {
+      state.pdfModal = null;
+      render();
+    });
+  }
+
+  const pdfBackdrop = document.getElementById('pdf-modal-backdrop');
+  if (pdfBackdrop) {
+    pdfBackdrop.addEventListener('click', (e) => {
+      if (e.target === pdfBackdrop) {
+        state.pdfModal = null;
+        render();
+      }
+    });
+  }
 
   // 重命名已归档附件
   document.querySelectorAll('[data-rename-att-idx]').forEach((btn) => {
@@ -1227,6 +1305,11 @@ window.addEventListener('keydown', (e) => {
     render();
   } else if (e.key === 'Escape') {
     e.preventDefault();
+    if (state.pdfModal) {
+      state.pdfModal = null;
+      render();
+      return;
+    }
     Bridge.sendWindowCommand('hide');
   } else if (e.key === '/' && document.activeElement?.tagName !== 'TEXTAREA' && document.activeElement?.tagName !== 'INPUT') {
     e.preventDefault();
