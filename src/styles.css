@@ -1650,3 +1650,244 @@ body {
   opacity: 0.6;
   cursor: not-allowed;
 }
+
+/* =========================================================
+   实时密钥备注提示条 & 归档前预检拦截弹窗 (Precheck & Key Hint)
+   ========================================================= */
+.live-key-hint-bar {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.key-hint-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.key-hint-badge {
+  background: #f59e0b;
+  color: #ffffff;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 99px;
+}
+
+.key-hint-text {
+  font-size: 12.5px;
+  color: #92400e;
+}
+
+.key-hint-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.key-quick-chip {
+  border: 1px solid #fcd34d;
+  background: #ffffff;
+  color: #b45309;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 3px 9px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.14s ease;
+}
+
+.key-quick-chip:hover {
+  background: #fef3c7;
+  border-color: #f59e0b;
+}
+
+.precheck-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.56);
+  backdrop-filter: blur(4px);
+  z-index: 9800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.precheck-modal-card {
+  width: 100%;
+  max-width: 560px;
+  background: #ffffff;
+  border-radius: 14px;
+  border: 1px solid #cbd5e1;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.3);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: chatPanelSlideUp 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.precheck-modal-header {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #f8fafc;
+}
+
+.precheck-modal-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.precheck-modal-body {
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-height: 68vh;
+  overflow-y: auto;
+}
+
+.precheck-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.precheck-section-desc {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+
+.precheck-dup-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.precheck-dup-item {
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
+  border-left: 4px solid #f59e0b;
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.precheck-dup-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.precheck-dup-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.precheck-dup-reason {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #b45309;
+  background: #fef3c7;
+  padding: 2px 8px;
+  border-radius: 99px;
+}
+
+.precheck-dup-meta {
+  font-size: 12px;
+  color: var(--text-secondary);
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.precheck-dup-path {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.precheck-dup-path code {
+  font-family: Consolas, monospace;
+  background: #e2e8f0;
+  color: #334155;
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.precheck-dup-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.key-warn-section {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+
+.precheck-key-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.key-type-pill {
+  background: #f59e0b;
+  color: #ffffff;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 99px;
+}
+
+.key-masked-code {
+  font-family: Consolas, monospace;
+  font-size: 12px;
+  background: #fef3c7;
+  color: #92400e;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.precheck-note-input {
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid #f59e0b;
+  border-radius: 8px;
+  font-size: 13px;
+  background: #ffffff;
+  outline: none;
+}
+
+.precheck-note-input:focus {
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.2);
+}
+
+.precheck-modal-footer {
+  padding: 12px 18px;
+  border-top: 1px solid var(--border-color);
+  background: #f8fafc;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}

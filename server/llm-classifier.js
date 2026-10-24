@@ -1,6 +1,6 @@
 import path from 'node:path';
 import OpenAI from 'openai';
-import { getConfig, sanitizeFileName } from './vault-manager.js';
+import { getConfig, sanitizeFileName, detectSecretKeyInfo } from './vault-manager.js';
 import { extractFileContent, isMeaninglessFileName } from './file-extractor.js';
 
 /**
@@ -274,6 +274,12 @@ export function heuristicClassify({ content = '', attachments = [], categories =
   }
   if (/Blender|3D|渲染|动画|FFmpeg/i.test(combinedText)) {
     tags.add('3D与视频');
+  }
+
+  const keyInfo = detectSecretKeyInfo(userText);
+  if (keyInfo.isKey) {
+    if (!hasDoc) category = pickCat('02-技术与代码');
+    tags.add('API密钥');
   }
 
   const todoIndicators = /待办|TODO|截止|会议|周报|合同|发票|报销|客户|排期|明天|下周|记得/i;

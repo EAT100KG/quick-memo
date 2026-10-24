@@ -65,6 +65,7 @@ const state = {
   activeMemoId: null,
   isEditingDetail: false,
   pdfModal: null, // { title, url }
+  precheckModal: null, // { duplicates: [], keyReminder: null, noteDraft: '' }
 
   // 聊天泡泡与全文文档索引状态
   chatOpen: false,
@@ -87,6 +88,54 @@ function isPdfAttachment(att = {}) {
     String(att.name || '').toLowerCase().endsWith('.pdf') ||
     String(att.absPath || '').toLowerCase().endsWith('.pdf')
   );
+}
+
+function detectSecretKeyClient(rawText = '') {
+  const text = String(rawText || '').trim();
+  if (!text) return { isKey: false, needsNote: false };
+
+  const patterns = [
+    { type: 'sk- 开头 API Key', regex: /\bsk-[a-zA-Z0-9_-]{14,}\b/ },
+    { type: 'GitHub Token', regex: /\b(ghp|gho|ghu|ghs|ghr|github_pat)_[a-zA-Z0-9_]{16,}\b/ },
+    { type: '云厂商 AccessKey', regex: /\b(LTAI|AKIA|ASIA)[a-zA-Z0-9]{12,}\b/ },
+    { type: 'AppSecret / 32位密钥', regex: /\b(cli_[a-zA-Z0-9]{12,}|[a-f0-9]{32,64})\b/i },
+    { type: 'UUID 格式 API Key / 密钥', regex: /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i },
+    { type: 'JWT 令牌', regex: /\beyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{8,}\b/ },
+    { type: '环境变量密钥配置', regex: /\b(API_KEY|SECRET_KEY|ACCESS_TOKEN|APP_SECRET|PRIVATE_KEY|OPENAI_API_KEY|DEEPSEEK_API_KEY)\s*[:=]\s*['"]?([^\s'"]{8,})['"]?/i }
+  ];
+
+  let matchedType = '';
+  let matchedValue = '';
+  for (const p of patterns) {
+    const m = text.match(p.regex);
+    if (m) {
+      matchedType = p.type;
+      matchedValue = m[0];
+      break;
+    }
+  }
+
+  if (!matchedType && !/^https?:\/\//i.test(text) && /^[a-zA-Z0-9_\-+=/.]{24,120}$/.test(text) && /[a-zA-Z]/.test(text) && /\d/.test(text)) {
+    matchedType = '高强度密钥 / Token 串';
+    matchedValue = text;
+  }
+
+  if (!matchedType) return { isKey: false, needsNote: false };
+
+  const remainder = text
+    .replace(matchedValue, '')
+    .replace(/\b(API_KEY|SECRET_KEY|ACCESS_TOKEN|APP_SECRET|PRIVATE_KEY|Bearer|export|const|let|key|token|api)\b/gi, '')
+    .replace(/[=:;"'`\s\-_]/g, '')
+    .trim();
+
+  const cjkCount = (remainder.match(/[\u4e00-\u9fa5]/g) || []).length;
+  const hasMeaningfulNote = cjkCount >= 2 || remainder.length >= 6;
+
+  return {
+    isKey: true,
+    needsNote: !hasMeaningfulNote,
+    keyType: matchedType
+  };
 }
 
 function escapeHtml(str = '') {
@@ -221,14 +270,45 @@ function focusCaptureInput() {
   }, 30);
 }
 
-async function handleSubmitCapture() {
-  const content = state.draftContent.trim();
+async function handleSubmitCapture(options = {}) {
+  const { forceSave = false, extraNote = '' } = options;
+  let content = state.draftContent.trim();
   const rawAttachments = state.draftAttachments;
   if (!content && rawAttachments.length === 0) {
     return;
   }
   if (state.saving) return;
 
+  if (extraNote.trim()) {
+    content = `【${extraNote.trim()}】\n${content}`;
+    state.draftContent = content;
+  }
+
+  // 归档前智能预检：1. 是否之前保存过相同内容/文件；2. 是否为未写备注的 API Key/密钥
+  if (!forceSave) {
+    try {
+      const check = await Bridge.precheckMemo({
+        content,
+        rawAttachments
+      });
+      if (check.hasDuplicate || check.keyReminder?.needsNote) {
+        state.precheckModal = {
+          duplicates: check.duplicates || [],
+          keyReminder: check.keyReminder || null,
+          noteDraft: ''
+        };
+        render();
+        setTimeout(() => {
+          document.getElementById('precheck-key-note-input')?.focus();
+        }, 30);
+        return;
+      }
+    } catch (err) {
+      console.warn('Precheck skipped:', err);
+    }
+  }
+
+  state.precheckModal = null;
   state.saving = true;
   render();
 
@@ -375,6 +455,25 @@ function renderCaptureView() {
             rows="5"
           >${escapeHtml(state.draftContent)}</textarea>
         </div>
+
+        ${(() => {
+          const liveKey = detectSecretKeyClient(state.draftContent);
+          if (!liveKey.needsNote) return '';
+          const quickKeyNotes = ['DeepSeek API Key', 'OpenAI API Key', '硅基流动 API Key', '阿里云百炼 Key', 'GitHub Token', '服务器/账号密码'];
+          return `
+            <div class="live-key-hint-bar" id="live-key-hint-bar">
+              <div class="key-hint-top">
+                <span class="key-hint-badge">🔑 检测到 ${escapeHtml(liveKey.keyType)}</span>
+                <span class="key-hint-text">建议顺手加一句备注说明它是哪个平台或什么用途，方便日后搜索找回：</span>
+              </div>
+              <div class="key-hint-chips">
+                ${quickKeyNotes.map((tag) => `
+                  <button class="key-quick-chip" data-insert-key-note="${escapeHtml(tag)}">+ ${escapeHtml(tag)}</button>
+                `).join('')}
+              </div>
+            </div>
+          `;
+        })()}
 
         ${state.draftAttachments.length > 0 ? `
           <div class="draft-attachments">
@@ -1000,6 +1099,100 @@ function renderChatBubbleWidget() {
   `;
 }
 
+function renderPrecheckModal() {
+  const modal = state.precheckModal;
+  if (!modal) return '';
+
+  const hasDup = Array.isArray(modal.duplicates) && modal.duplicates.length > 0;
+  const hasKeyWarn = Boolean(modal.keyReminder?.needsNote);
+  const quickKeyNotes = ['DeepSeek API Key', 'OpenAI API Key', '硅基流动 API Key', '阿里云百炼 Key', 'GitHub Token', '服务器/数据库密码'];
+
+  return `
+    <div class="precheck-modal-backdrop" id="precheck-modal-backdrop">
+      <div class="precheck-modal-card">
+        <div class="precheck-modal-header">
+          <div class="precheck-modal-title">
+            ${hasDup && hasKeyWarn
+              ? '⚠️ 发现重复记录 & 密钥未写备注'
+              : hasDup
+                ? '⚠️ 之前已经保存过相同的内容！'
+                : '🔑 检测到密钥 / Key，建议补充一句备注'}
+          </div>
+          <button class="chat-close-btn" id="btn-close-precheck-modal" title="返回修改 (Esc)">✕</button>
+        </div>
+
+        <div class="precheck-modal-body">
+          ${hasDup ? `
+            <div class="precheck-section">
+              <div class="precheck-section-desc">
+                系统在本地知识库中检测到 <strong>${modal.duplicates.length} 条</strong> 与当前内容相同或高度重合的记录，保存在以下位置：
+              </div>
+              <div class="precheck-dup-list">
+                ${modal.duplicates.map((dup) => `
+                  <div class="precheck-dup-item">
+                    <div class="precheck-dup-top">
+                      <span class="precheck-dup-title">📄 ${escapeHtml(dup.title)}</span>
+                      <span class="precheck-dup-reason">${escapeHtml(dup.matchReason)}</span>
+                    </div>
+                    <div class="precheck-dup-meta">
+                      <span>📂 所在分类：<strong>${escapeHtml(dup.category)}</strong></span>
+                      <span>·</span>
+                      <span>🕒 保存于 ${escapeHtml(dup.createdAt)}</span>
+                    </div>
+                    <div class="precheck-dup-path">📍 本地路径：<code>${escapeHtml(dup.mdRelPath)}</code></div>
+                    <div class="precheck-dup-actions">
+                      <button class="mini-btn primary" data-precheck-open-existing="${escapeHtml(dup.id)}">📄 查看已有记录（不重复保存）</button>
+                      <button class="mini-btn" data-open-md="${escapeHtml(dup.mdAbsPath)}">📂 在文件夹中定位</button>
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          ` : ''}
+
+          ${hasKeyWarn ? `
+            <div class="precheck-section key-warn-section">
+              <div class="precheck-key-banner">
+                <span class="key-type-pill">🔑 ${escapeHtml(modal.keyReminder.keyType)}</span>
+                <code class="key-masked-code">${escapeHtml(modal.keyReminder.maskedKey || '')}</code>
+              </div>
+              <div class="precheck-section-desc">
+                你粘贴的似乎是一串裸密钥/Token，但还没有写明它是哪个平台或什么用途。<strong>强烈建议补一句备注</strong>，否则过段时间很难搜出来：
+              </div>
+              <input
+                type="text"
+                id="precheck-key-note-input"
+                class="precheck-note-input"
+                placeholder="例如：DeepSeek 生产环境 API Key / 公司测试服密码 (按 Enter 直接保存)..."
+                value="${escapeHtml(modal.noteDraft || '')}"
+              />
+              <div class="key-hint-chips">
+                ${quickKeyNotes.map((tag) => `
+                  <button class="key-quick-chip" data-precheck-note-chip="${escapeHtml(tag)}">+ ${escapeHtml(tag)}</button>
+                `).join('')}
+              </div>
+            </div>
+          ` : ''}
+        </div>
+
+        <div class="precheck-modal-footer">
+          <button class="tool-btn" id="btn-precheck-cancel">🔙 返回修改</button>
+          ${hasDup ? `
+            <button class="tool-btn danger" id="btn-precheck-discard">🗑️ 放弃本次并清空输入</button>
+          ` : ''}
+          <button class="primary-submit-btn" id="btn-precheck-confirm-save">
+            ${hasDup && hasKeyWarn
+              ? '✅ 加上备注并依然保存'
+              : hasDup
+                ? '✅ 依然继续保存（存为新记录）'
+                : '✨ 补充备注并归档保存'}
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 export function render() {
   const app = document.getElementById('app');
   if (!app) return;
@@ -1023,6 +1216,7 @@ export function render() {
       ${renderHeader()}
       ${bodyHtml}
       ${renderChatBubbleWidget()}
+      ${renderPrecheckModal()}
       ${state.pdfModal ? `
         <div class="pdf-modal-backdrop" id="pdf-modal-backdrop">
           <div class="pdf-modal-window">
@@ -1090,7 +1284,18 @@ function bindEvents() {
   const textarea = document.getElementById('capture-textarea');
   if (textarea) {
     textarea.addEventListener('input', (e) => {
+      const prevNeedsNote = detectSecretKeyClient(state.draftContent).needsNote;
       state.draftContent = e.target.value;
+      const nextNeedsNote = detectSecretKeyClient(state.draftContent).needsNote;
+      if (prevNeedsNote !== nextNeedsNote) {
+        const pos = e.target.selectionStart;
+        render();
+        const nextEl = document.getElementById('capture-textarea');
+        if (nextEl) {
+          nextEl.focus();
+          nextEl.setSelectionRange(pos, pos);
+        }
+      }
     });
 
     textarea.addEventListener('keydown', (e) => {
@@ -1197,7 +1402,101 @@ function bindEvents() {
 
   const btnSubmit = document.getElementById('btn-submit-memo');
   if (btnSubmit) {
-    btnSubmit.addEventListener('click', handleSubmitCapture);
+    btnSubmit.addEventListener('click', () => handleSubmitCapture());
+  }
+
+  // 实时密钥备注快捷标签插入
+  document.querySelectorAll('[data-insert-key-note]').forEach((chip) => {
+    chip.addEventListener('click', () => {
+      const note = chip.getAttribute('data-insert-key-note');
+      if (!note) return;
+      state.draftContent = `【${note}】\n${state.draftContent.trim()}`;
+      render();
+      focusCaptureInput();
+    });
+  });
+
+  // 归档前预检弹窗（查重提醒 & 密钥备注提醒）事件绑定
+  const closePrecheck = () => {
+    state.precheckModal = null;
+    render();
+    focusCaptureInput();
+  };
+
+  document.getElementById('btn-close-precheck-modal')?.addEventListener('click', closePrecheck);
+  document.getElementById('btn-precheck-cancel')?.addEventListener('click', closePrecheck);
+
+  const precheckBackdrop = document.getElementById('precheck-modal-backdrop');
+  if (precheckBackdrop) {
+    precheckBackdrop.addEventListener('click', (e) => {
+      if (e.target === precheckBackdrop) closePrecheck();
+    });
+  }
+
+  const btnPrecheckDiscard = document.getElementById('btn-precheck-discard');
+  if (btnPrecheckDiscard) {
+    btnPrecheckDiscard.addEventListener('click', () => {
+      state.precheckModal = null;
+      state.draftContent = '';
+      state.draftAttachments = [];
+      state.draftManualCategory = '';
+      render();
+      focusCaptureInput();
+    });
+  }
+
+  document.querySelectorAll('[data-precheck-open-existing]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const existingId = btn.getAttribute('data-precheck-open-existing');
+      state.precheckModal = null;
+      state.draftContent = '';
+      state.draftAttachments = [];
+      state.activeMemoId = existingId;
+      state.selectedCategory = 'ALL';
+      state.selectedType = 'all';
+      state.selectedTag = '';
+      state.searchQuery = '';
+      state.activeTab = 'vault';
+      render();
+    });
+  });
+
+  const precheckNoteInput = document.getElementById('precheck-key-note-input');
+  if (precheckNoteInput) {
+    precheckNoteInput.addEventListener('input', (e) => {
+      if (state.precheckModal) {
+        state.precheckModal.noteDraft = e.target.value;
+      }
+    });
+    precheckNoteInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const noteVal = precheckNoteInput.value.trim();
+        handleSubmitCapture({ forceSave: true, extraNote: noteVal });
+      }
+    });
+  }
+
+  document.querySelectorAll('[data-precheck-note-chip]').forEach((chip) => {
+    chip.addEventListener('click', () => {
+      const tag = chip.getAttribute('data-precheck-note-chip') || '';
+      if (state.precheckModal) {
+        state.precheckModal.noteDraft = tag;
+      }
+      const inputEl = document.getElementById('precheck-key-note-input');
+      if (inputEl) {
+        inputEl.value = tag;
+        inputEl.focus();
+      }
+    });
+  });
+
+  const btnPrecheckConfirm = document.getElementById('btn-precheck-confirm-save');
+  if (btnPrecheckConfirm) {
+    btnPrecheckConfirm.addEventListener('click', () => {
+      const noteVal = document.getElementById('precheck-key-note-input')?.value.trim() || '';
+      handleSubmitCapture({ forceSave: true, extraNote: noteVal });
+    });
   }
 
   const btnViewAll = document.getElementById('btn-view-all-vault');
@@ -1649,6 +1948,12 @@ window.addEventListener('keydown', (e) => {
     if (state.pdfModal) {
       state.pdfModal = null;
       render();
+      return;
+    }
+    if (state.precheckModal) {
+      state.precheckModal = null;
+      render();
+      focusCaptureInput();
       return;
     }
     if (state.chatOpen) {

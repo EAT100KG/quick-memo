@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { exec } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
@@ -536,4 +537,196 @@ function detectMemoType(content = '', attachments = []) {
     return 'code';
   }
   return 'text';
+}
+
+/**
+ * 识别文本中是否包含 API Key / Token / 密钥 / 访问凭据，并检查用户是否写了足够的中文/语义备注
+ */
+export function detectSecretKeyInfo(rawText = '') {
+  const text = String(rawText || '').trim();
+  if (!text) {
+    return { isKey: false, needsNote: false };
+  }
+
+  const patterns = [
+    { type: 'OpenAI / DeepSeek / 通用 sk- 密钥', regex: /\bsk-[a-zA-Z0-9_-]{14,}\b/ },
+    { type: 'GitHub 访问令牌 (Token)', regex: /\b(ghp|gho|ghu|ghs|ghr|github_pat)_[a-zA-Z0-9_]{16,}\b/ },
+    { type: '云厂商 AccessKey (阿里云/AWS)', regex: /\b(LTAI|AKIA|ASIA)[a-zA-Z0-9]{12,}\b/ },
+    { type: '飞书 / 企微 / 平台 AppSecret', regex: /\b(cli_[a-zA-Z0-9]{12,}|[a-f0-9]{32,64})\b/i },
+    { type: 'UUID 格式 API Key / 密钥', regex: /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i },
+    { type: 'JWT 认证令牌 (Bearer Token)', regex: /\beyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{8,}\b/ },
+    { type: '环境变量密钥配置', regex: /\b(API_KEY|SECRET_KEY|ACCESS_TOKEN|APP_SECRET|PRIVATE_KEY|OPENAI_API_KEY|DEEPSEEK_API_KEY)\s*[:=]\s*['"]?([^\s'"]{8,})['"]?/i }
+  ];
+
+  let matchedType = '';
+  let matchedValue = '';
+
+  for (const p of patterns) {
+    const m = text.match(p.regex);
+    if (m) {
+      matchedType = p.type;
+      matchedValue = m[0];
+      break;
+    }
+  }
+
+  // 如果整段文本就是一串无空格的 24~120 位高熵字母数字混合串（且不是普通网址）
+  if (!matchedType && !/^https?:\/\//i.test(text) && /^[a-zA-Z0-9_\-+=/.]{24,120}$/.test(text) && /[a-zA-Z]/.test(text) && /\d/.test(text)) {
+    matchedType = '高强度密钥 / Token 串';
+    matchedValue = text;
+  }
+
+  if (!matchedType) {
+    return { isKey: false, needsNote: false };
+  }
+
+  // 把匹配到的密钥串和常见变量名剥离后，看剩下的文字里有没有说明用途的备注（比如中文说明或超过 2 个描述词）
+  const remainder = text
+    .replace(matchedValue, '')
+    .replace(/\b(API_KEY|SECRET_KEY|ACCESS_TOKEN|APP_SECRET|PRIVATE_KEY|Bearer|export|const|let|key|token|api)\b/gi, '')
+    .replace(/[=:;"'`\s\-_]/g, '')
+    .trim();
+
+  const cjkCount = (remainder.match(/[\u4e00-\u9fa5]/g) || []).length;
+  const hasMeaningfulNote = cjkCount >= 2 || remainder.length >= 6;
+
+  const masked = matchedValue.length > 12
+    ? `${matchedValue.slice(0, 6)}••••${matchedValue.slice(-4)}`
+    : matchedValue;
+
+  return {
+    isKey: true,
+    needsNote: !hasMeaningfulNote,
+    keyType: matchedType,
+    maskedKey: masked
+  };
+}
+
+/**
+ * 归档前预检：
+ * 1. 检查当前文本、链接或上传的附件是否之前已经保存过（精准返回之前保存的分类位置、标题、时间）
+ * 2. 检查是否包含未写备注的 API Key / 密钥串
+ */
+export function precheckMemo({ content = '', rawAttachments = [] }) {
+  const existingMemos = listMemos();
+  const cleanText = String(content || '')
+    .replace(/^### 📄 文档内容提取预览\s*/m, '')
+    .trim();
+  const normText = cleanText.replace(/\s+/g, ' ').toLowerCase();
+
+  // 提取输入中的网址
+  const inputUrls = (cleanText.match(/https?:\/\/[^\s)]+/gi) || []).map((u) => u.toLowerCase().replace(/\/+$/, ''));
+
+  // 计算待上传附件的二进制 SHA-256 指纹与文件名
+  const incomingAtts = (rawAttachments || []).map((att) => {
+    let sha256 = '';
+    let byteLength = att.size || 0;
+    try {
+      if (att.dataBase64) {
+        const cleanB64 = String(att.dataBase64).replace(/^data:[^;]+;base64,/, '');
+        const buf = Buffer.from(cleanB64, 'base64');
+        byteLength = buf.length;
+        sha256 = crypto.createHash('sha256').update(buf).digest('hex');
+      }
+    } catch {}
+    return {
+      name: (att.name || '').trim(),
+      originalName: (att.originalName || '').trim(),
+      detectedTitle: (att.detectedTitle || '').trim(),
+      size: byteLength,
+      sha256
+    };
+  });
+
+  const duplicates = [];
+
+  for (const memo of existingMemos) {
+    let matchReason = '';
+    let matchedAttachmentName = '';
+
+    // 1. 优先比对附件（SHA-256 完全一致，或文件名/提取标题一致）
+    if (incomingAtts.length > 0 && Array.isArray(memo.attachments) && memo.attachments.length > 0) {
+      for (const inc of incomingAtts) {
+        for (const existAtt of memo.attachments) {
+          // 比对磁盘文件的 SHA-256
+          if (inc.sha256 && existAtt.absPath && fs.existsSync(existAtt.absPath)) {
+            try {
+              const stat = fs.statSync(existAtt.absPath);
+              if (!inc.size || stat.size === inc.size) {
+                const existHash = crypto.createHash('sha256').update(fs.readFileSync(existAtt.absPath)).digest('hex');
+                if (existHash === inc.sha256) {
+                  matchReason = '文件内容 100% 相同（SHA-256 指纹一致）';
+                  matchedAttachmentName = existAtt.name;
+                  break;
+                }
+              }
+            } catch {}
+          }
+
+          // 比对重命名后的文件名或原文件名
+          const existNameLower = (existAtt.name || '').toLowerCase();
+          if (
+            (inc.name && inc.name.toLowerCase() === existNameLower) ||
+            (inc.originalName && inc.originalName.toLowerCase() === existNameLower)
+          ) {
+            matchReason = `已存在同名文件「${existAtt.name}」`;
+            matchedAttachmentName = existAtt.name;
+            break;
+          }
+        }
+        if (matchReason) break;
+
+        if (!matchReason && inc.detectedTitle && memo.title && inc.detectedTitle.toLowerCase() === memo.title.toLowerCase()) {
+          matchReason = `已保存过同标题文档「${memo.title}」`;
+          break;
+        }
+      }
+    }
+
+    // 2. 比对网址链接或正文文本
+    if (!matchReason && normText.length >= 6) {
+      const memoCleanText = String(memo.content || '')
+        .replace(/^### 📄 文档内容提取预览\s*/m, '')
+        .trim();
+      const memoNorm = memoCleanText.replace(/\s+/g, ' ').toLowerCase();
+
+      if (inputUrls.length > 0) {
+        const memoUrls = (memoCleanText.match(/https?:\/\/[^\s)]+/gi) || []).map((u) => u.toLowerCase().replace(/\/+$/, ''));
+        const sameUrl = inputUrls.find((u) => memoUrls.includes(u));
+        if (sameUrl) {
+          matchReason = `已保存过相同的网址链接 (${sameUrl.slice(0, 45)}${sameUrl.length > 45 ? '...' : ''})`;
+        }
+      }
+
+      if (!matchReason && memoNorm) {
+        if (normText === memoNorm) {
+          matchReason = '正文内容完全相同';
+        } else if (normText.length >= 16 && memoNorm.includes(normText)) {
+          matchReason = '该段内容已包含在既有记录中';
+        }
+      }
+    }
+
+    if (matchReason) {
+      duplicates.push({
+        id: memo.id,
+        title: memo.title,
+        category: memo.category,
+        createdAt: memo.createdAt,
+        mdRelPath: memo.mdRelPath,
+        mdAbsPath: memo.mdAbsPath,
+        summary: memo.summary,
+        matchReason,
+        matchedAttachmentName
+      });
+    }
+  }
+
+  const keyInfo = detectSecretKeyInfo(cleanText);
+
+  return {
+    hasDuplicate: duplicates.length > 0,
+    duplicates: duplicates.slice(0, 3),
+    keyReminder: keyInfo
+  };
 }

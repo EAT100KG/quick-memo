@@ -332,6 +332,13 @@ export const Bridge = {
     });
   },
 
+  async precheckMemo(payload) {
+    return apiRequest('/api/memos/precheck', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+
   async getIndexStatus() {
     return apiRequest('/api/index/status');
   },

@@ -12,7 +12,8 @@ import {
   updateMemo,
   deleteMemo,
   renameAttachment,
-  openInExplorer
+  openInExplorer,
+  precheckMemo
 } from './vault-manager.js';
 import { classifyWithLLM, heuristicClassify, testLlmConnection, smartRenameUploadedFile } from './llm-classifier.js';
 import {
@@ -174,6 +175,14 @@ export function startStandaloneServer(port = 1420, openWindow = false) {
         if (url.pathname === '/api/files/smart-rename' && req.method === 'POST') {
           const body = await readJsonBody(req);
           const result = await smartRenameUploadedFile(body.attachment || {}, body.noteText || '');
+          return sendJson(res, 200, result);
+        }
+        if (url.pathname === '/api/memos/precheck' && req.method === 'POST') {
+          const body = await readJsonBody(req);
+          const result = precheckMemo({
+            content: body.content || '',
+            rawAttachments: body.rawAttachments || []
+          });
           return sendJson(res, 200, result);
         }
         if (url.pathname === '/api/memos/quick-save' && req.method === 'POST') {
