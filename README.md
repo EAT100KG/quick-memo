@@ -1,0 +1,42 @@
+# QuickMemo · 闪念与文件 AI 收纳盒
+
+专为解决**“随手发给微信文件传输助手，转头就忘、找起来极麻烦”**而设计的本地桌面小程序。  
+采用 **Node.js + Tauri v2 / Windows 原生无黑框启动器** 架构，所有记录 **100% 存储为本地按分类整理的 Markdown (`.md`) 文件夹**，可直接用 Obsidian / Typora / VS Code 打开。
+
+---
+
+## ✨ 核心功能
+
+1. **Spotlight 风格极速随手丢入**：
+   - 支持直接 `Ctrl + V` 粘贴 **文字、灵感、代码片段、网址链接、剪贴板截图**。
+   - 支持直接把本地文件（**PDF、Word、表格、图片、压缩包**）拖拽进窗口归档。
+   - 按 `Ctrl + Enter` 一键归档；支持全局快捷键 **`Alt + Space`** 随时呼出窗口。
+2. **LLM 自动分类 + 规则兜底**：
+   - 自动判断并归入分类目录（`01-灵感与备忘`、`02-技术与代码`、`03-精读与链接`、`04-工作与待办`、`05-截图与视觉`、`06-资料与文档` 等，支持自定义增删）。
+   - 自动生成清晰好认的中文标题、一句话摘要与 `#标签`。
+   - 内置 DeepSeek、硅基流动、通义千问、OpenAI、本地 Ollama 一键预设；未配置 Key 时自动使用本地智能规则零延迟分类。
+3. **纯本地 Markdown 归档（Obsidian 原生兼容）**：
+   - 默认存储在 `./vault/`（可在设置中修改为你的 Obsidian 仓库目录）。
+   - 截图与附件自动存入对应分类下的 `assets/` 子目录，并在 `.md` 中通过标准相对路径引用。
+4. **三栏式秒级检索与管理**：
+   - 按分类文件夹、内容类型（文字/链接/代码/图片/文件）、高频 `#标签` 或全文关键词毫秒级筛选。
+
+---
+
+## 🚀 运行与编译方式
+
+### 方式一：直接双击 `QuickMemo.exe`（无黑框 + 系统托盘 + 全局热键）
+- 双击根目录下的 **`QuickMemo.exe`**：
+  - 后台静默启动本地服务（**无任何 CMD 黑窗口**）；
+  - 自动驻留 Windows 右下角系统托盘（右键托盘可打开主界面、打开本地 Markdown 目录或退出）；
+  - 随时随地按 **`Alt + Space`** 即可呼出/前置 QuickMemo 窗口。
+- 如需重新编译启动器：
+  ```powershell
+  C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /nologo /target:winexe /out:QuickMemo.exe /win32icon:src-tauri\icons\icon.ico /r:System.Windows.Forms.dll /r:System.Drawing.dll launcher\QuickMemoLauncher.cs
+  ```
+
+### 方式二：使用 Tauri v2 编译构建
+```powershell
+npm install
+npm run tauri:build
+```

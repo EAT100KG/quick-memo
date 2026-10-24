@@ -1,0 +1,17 @@
+# Dependencies & Build outputs
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
+
+# Local user config (may contain LLM API keys)
+.quick-memo-config.json
+
+# User local Markdown vault data
+vault/*
+!vault/.gitkeep
+
+# OS & Editor files
+.DS_Store
+Thumbs.db
+*.log
