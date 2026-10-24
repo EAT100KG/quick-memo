@@ -2,6 +2,8 @@ using System;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
+using System.Drawing.Text;
 using System.IO;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
@@ -16,6 +18,229 @@ namespace QuickMemo
         Left,
         Right,
         Top
+    }
+
+    /// <summary>
+    /// 绘制 macOS 风格流光渐变圆角图标（便签折页 + AI 四角星芒）
+    /// </summary>
+    public static class AppIconRenderer
+    {
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern bool DestroyIcon(IntPtr handle);
+
+        public static Bitmap RenderIconBitmap(int size)
+        {
+            var bmp = new Bitmap(size, size, PixelFormat.Format32bppArgb);
+            using (Graphics g = Graphics.FromImage(bmp))
+            {
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
+                g.Clear(Color.Transparent);
+
+                float pad = size * 0.06f;
+                float boxSize = size - pad * 2f;
+                float radius = boxSize * 0.24f;
+                RectangleF rect = new RectangleF(pad, pad, boxSize, boxSize);
+
+                // 1. macOS 风格流光渐变底板 (靛紫 -> 科技蓝 -> 冰川青)
+                using (GraphicsPath bgPath = CreateRoundedRectPath(rect, radius))
+                {
+                    using (var bgBrush = new LinearGradientBrush(
+                        new PointF(rect.Left, rect.Top),
+                        new PointF(rect.Right, rect.Bottom),
+                        Color.FromArgb(255, 99, 102, 241), // #6366F1
+                        Color.FromArgb(255, 6, 182, 212))) // #06B6D4
+                    {
+                        var blend = new ColorBlend(3)
+                        {
+                            Colors = new[]
+                            {
+                                Color.FromArgb(255, 99, 102, 241),
+                                Color.FromArgb(255, 37, 99, 235),
+                                Color.FromArgb(255, 6, 182, 212)
+                            },
+                            Positions = new[] { 0f, 0.52f, 1f }
+                        };
+                        bgBrush.InterpolationColors = blend;
+                        g.FillPath(bgBrush, bgPath);
+                    }
+
+                    // 顶部柔光玻璃折射层
+                    RectangleF glossRect = new RectangleF(rect.Left, rect.Top, rect.Width, rect.Height * 0.55f);
+                    using (var glossBrush = new LinearGradientBrush(
+                        glossRect,
+                        Color.FromArgb(75, 255, 255, 255),
+                        Color.FromArgb(0, 255, 255, 255),
+                        LinearGradientMode.Vertical))
+                    {
+                        g.SetClip(bgPath);
+                        g.FillEllipse(glossBrush, rect.Left - rect.Width * 0.2f, rect.Top - rect.Height * 0.35f, rect.Width * 1.4f, rect.Height * 0.9f);
+                        g.ResetClip();
+                    }
+
+                    // 镜面内高光边框
+                    using (var borderPen = new Pen(Color.FromArgb(115, 255, 255, 255), Math.Max(1f, size * 0.022f)))
+                    {
+                        g.DrawPath(borderPen, bgPath);
+                    }
+                }
+
+                // 2. 中心悬浮磨砂白便签卡片
+                float cardW = boxSize * 0.54f;
+                float cardH = boxSize * 0.60f;
+                float cardX = pad + (boxSize - cardW) * 0.44f;
+                float cardY = pad + (boxSize - cardH) * 0.52f;
+                float cardRadius = cardW * 0.18f;
+                RectangleF cardRect = new RectangleF(cardX, cardY, cardW, cardH);
+
+                // 卡片柔和投影
+                RectangleF shadowRect = new RectangleF(cardX + size * 0.015f, cardY + size * 0.03f, cardW, cardH);
+                using (GraphicsPath shadowPath = CreateRoundedRectPath(shadowRect, cardRadius))
+                using (var shadowBrush = new SolidBrush(Color.FromArgb(55, 15, 23, 42)))
+                {
+                    g.FillPath(shadowBrush, shadowPath);
+                }
+
+                // 卡片本体
+                using (GraphicsPath cardPath = CreateRoundedRectPath(cardRect, cardRadius))
+                using (var cardBrush = new LinearGradientBrush(
+                    cardRect,
+                    Color.FromArgb(250, 255, 255, 255),
+                    Color.FromArgb(230, 241, 245, 249),
+                    LinearGradientMode.Vertical))
+                {
+                    g.FillPath(cardBrush, cardPath);
+                }
+
+                // 卡片上的三行精致分类笔记横线
+                float lineLeft = cardX + cardW * 0.20f;
+                float lineThickness = Math.Max(1.5f, size * 0.048f);
+                using (var linePen1 = new Pen(Color.FromArgb(235, 59, 130, 246), lineThickness) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+                using (var linePen2 = new Pen(Color.FromArgb(180, 99, 102, 241), lineThickness) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+                using (var linePen3 = new Pen(Color.FromArgb(140, 148, 163, 184), lineThickness) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+                {
+                    float y1 = cardY + cardH * 0.30f;
+                    float y2 = cardY + cardH * 0.52f;
+                    float y3 = cardY + cardH * 0.74f;
+                    g.DrawLine(linePen1, lineLeft, y1, cardX + cardW * 0.78f, y1);
+                    g.DrawLine(linePen2, lineLeft, y2, cardX + cardW * 0.68f, y2);
+                    g.DrawLine(linePen3, lineLeft, y3, cardX + cardW * 0.52f, y3);
+                }
+
+                // 3. 右上角璀璨 AI 四角星芒 (Sparkle)
+                float starCx = pad + boxSize * 0.74f;
+                float starCy = pad + boxSize * 0.27f;
+                float starR = boxSize * 0.21f;
+                using (GraphicsPath starPath = CreateFourPointStarPath(starCx, starCy, starR, starR * 0.28f))
+                using (var starBrush = new LinearGradientBrush(
+                    new RectangleF(starCx - starR, starCy - starR, starR * 2, starR * 2),
+                    Color.FromArgb(255, 255, 251, 235),
+                    Color.FromArgb(255, 251, 191, 36),
+                    LinearGradientMode.ForwardDiagonal))
+                {
+                    g.FillPath(starBrush, starPath);
+                    using (var starPen = new Pen(Color.FromArgb(220, 255, 255, 255), Math.Max(1f, size * 0.015f)))
+                    {
+                        g.DrawPath(starPen, starPath);
+                    }
+                }
+            }
+            return bmp;
+        }
+
+        public static Icon CreateRuntimeIcon(int size)
+        {
+            using (Bitmap bmp = RenderIconBitmap(size))
+            {
+                IntPtr hIcon = bmp.GetHicon();
+                using (Icon temp = Icon.FromHandle(hIcon))
+                {
+                    Icon cloned = (Icon)temp.Clone();
+                    DestroyIcon(hIcon);
+                    return cloned;
+                }
+            }
+        }
+
+        public static void SaveIconFiles(string pngPath, string icoPath)
+        {
+            using (Bitmap bmp256 = RenderIconBitmap(256))
+            {
+                bmp256.Save(pngPath, ImageFormat.Png);
+            }
+
+            // 生成包含 256, 64, 32, 16 的多分辨率标准 ICO
+            int[] sizes = new[] { 256, 64, 32, 16 };
+            byte[][] pngBuffers = new byte[sizes.Length][];
+            for (int i = 0; i < sizes.Length; i++)
+            {
+                using (Bitmap b = RenderIconBitmap(sizes[i]))
+                using (var ms = new MemoryStream())
+                {
+                    b.Save(ms, ImageFormat.Png);
+                    pngBuffers[i] = ms.ToArray();
+                }
+            }
+
+            using (var fs = new FileStream(icoPath, FileMode.Create, FileAccess.Write))
+            using (var bw = new BinaryWriter(fs))
+            {
+                bw.Write((ushort)0); // Reserved
+                bw.Write((ushort)1); // Type: ICO
+                bw.Write((ushort)sizes.Length); // Count
+
+                int offset = 6 + 16 * sizes.Length;
+                for (int i = 0; i < sizes.Length; i++)
+                {
+                    int s = sizes[i];
+                    bw.Write((byte)(s >= 256 ? 0 : s));
+                    bw.Write((byte)(s >= 256 ? 0 : s));
+                    bw.Write((byte)0);
+                    bw.Write((byte)0);
+                    bw.Write((ushort)1);
+                    bw.Write((ushort)32);
+                    bw.Write((uint)pngBuffers[i].Length);
+                    bw.Write((uint)offset);
+                    offset += pngBuffers[i].Length;
+                }
+
+                for (int i = 0; i < sizes.Length; i++)
+                {
+                    bw.Write(pngBuffers[i]);
+                }
+            }
+        }
+
+        public static GraphicsPath CreateRoundedRectPath(RectangleF rect, float radius)
+        {
+            float d = Math.Min(radius * 2f, Math.Min(rect.Width, rect.Height));
+            var path = new GraphicsPath();
+            path.AddArc(rect.Left, rect.Top, d, d, 180, 90);
+            path.AddArc(rect.Right - d, rect.Top, d, d, 270, 90);
+            path.AddArc(rect.Right - d, rect.Bottom - d, d, d, 0, 90);
+            path.AddArc(rect.Left, rect.Bottom - d, d, d, 90, 90);
+            path.CloseFigure();
+            return path;
+        }
+
+        public static GraphicsPath CreateFourPointStarPath(float cx, float cy, float outerR, float innerR)
+        {
+            var pts = new PointF[8];
+            for (int i = 0; i < 8; i++)
+            {
+                double angle = i * Math.PI / 4.0 - Math.PI / 2.0;
+                float r = (i % 2 == 0) ? outerR : innerR;
+                pts[i] = new PointF(
+                    cx + (float)(Math.Cos(angle) * r),
+                    cy + (float)(Math.Sin(angle) * r)
+                );
+            }
+            var path = new GraphicsPath();
+            path.AddPolygon(pts);
+            return path;
+        }
     }
 
     public class QuickMemoAppContext : ApplicationContext
@@ -83,7 +308,6 @@ namespace QuickMemo
         }
 
         private const int HOTKEY_ID_TOGGLE = 9001;
-        private const int HOTKEY_ID_DOCK = 9002;
         private const uint MOD_ALT = 0x0001;
         private const uint VK_SPACE = 0x20;
         private const int VK_LBUTTON = 0x01;
@@ -98,7 +322,6 @@ namespace QuickMemo
         private static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
         private static readonly IntPtr HWND_NOTOPMOST = new IntPtr(-2);
         private const uint SWP_NOSIZE = 0x0001;
-        private const uint SWP_NOZORDER = 0x0004;
         private const uint SWP_NOACTIVATE = 0x0010;
         private const uint SWP_SHOWWINDOW = 0x0040;
 
@@ -118,7 +341,6 @@ namespace QuickMemo
         private bool _hasShownCloseTip = false;
         private bool _wasWindowAlive = false;
 
-        // 贴边缩到屏幕外状态
         private DockEdge _dockEdge = DockEdge.None;
         private bool _isCollapsedOutside = false;
         private Rectangle _expandedBounds = new Rectangle(200, 120, 1060, 720);
@@ -132,6 +354,18 @@ namespace QuickMemo
             {
                 try { File.Delete(_cmdFilePath); } catch { }
             }
+
+            // 同步更新本地图标文件
+            try
+            {
+                string iconDir = Path.Combine(_appRoot, "src-tauri", "icons");
+                if (!Directory.Exists(iconDir)) Directory.CreateDirectory(iconDir);
+                AppIconRenderer.SaveIconFiles(
+                    Path.Combine(iconDir, "icon.png"),
+                    Path.Combine(iconDir, "icon.ico")
+                );
+            }
+            catch { }
 
             EnsureBackendRunning();
             SetupTrayIcon();
@@ -200,20 +434,23 @@ namespace QuickMemo
 
         private void SetupTrayIcon()
         {
-            Icon icon = SystemIcons.Application;
-            string icoPath = Path.Combine(_appRoot, "src-tauri", "icons", "icon.ico");
-            if (File.Exists(icoPath))
+            Icon icon;
+            try
             {
-                try { icon = new Icon(icoPath); } catch { }
+                icon = AppIconRenderer.CreateRuntimeIcon(32);
+            }
+            catch
+            {
+                icon = SystemIcons.Application;
             }
 
             var menu = new ContextMenuStrip();
 
-            var openItem = new ToolStripMenuItem("⚡ 显示 / 隐藏主窗口 (Alt+Space)");
+            var openItem = new ToolStripMenuItem("✦ 显示 / 隐藏主窗口 (Alt+Space)");
             openItem.Font = new Font(openItem.Font, FontStyle.Bold);
             openItem.Click += (s, e) => ToggleWindowByShortcut();
 
-            var dockRightItem = new ToolStripMenuItem("⇥ 缩到屏幕右侧边缘 (鼠标移过去自动滑出)");
+            var dockRightItem = new ToolStripMenuItem("⇥ 缩到屏幕右侧边缘 (苹果磨砂悬浮条)");
             dockRightItem.Click += (s, e) => DockWindowToRightEdgeAndCollapse();
 
             var undockItem = new ToolStripMenuItem("🗔 恢复居中普通窗口");
@@ -236,7 +473,7 @@ namespace QuickMemo
             _trayIcon = new NotifyIcon
             {
                 Icon = icon,
-                Text = "QuickMemo · 闪念收纳盒 (Alt+Space 呼出 / 贴边自动缩起)",
+                Text = "QuickMemo · 闪念收纳盒 (Alt+Space)",
                 ContextMenuStrip = menu,
                 Visible = true
             };
@@ -276,11 +513,10 @@ namespace QuickMemo
                         var cls = new System.Text.StringBuilder(128);
                         GetClassName(hWnd, cls, cls.Capacity);
                         string clsName = cls.ToString();
-                        // 匹配 Edge/Chrome App 顶层窗口 (Chrome_WidgetWin_1)
                         if (clsName.Contains("Chrome_WidgetWin"))
                         {
                             found = hWnd;
-                            return false; // stop enumerating
+                            return false;
                         }
                     }
                 }
@@ -308,7 +544,6 @@ namespace QuickMemo
                     ShowWindow(hwnd, SW_SHOW);
                 }
 
-                // 模拟 Alt 键事件以允许后台进程将窗口置为前台焦点
                 keybd_event(VK_MENU, 0, KEYEVENTF_EXTENDEDKEY, UIntPtr.Zero);
                 SetForegroundWindow(hwnd);
                 keybd_event(VK_MENU, 0, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP, UIntPtr.Zero);
@@ -316,11 +551,6 @@ namespace QuickMemo
             catch { }
         }
 
-        /// <summary>
-        /// 按 Alt+Space 时的切换逻辑：
-        /// - 如果已隐藏、最小化、缩在屏幕外、或不在前台 -> 立即滑出/显示并置顶聚焦
-        /// - 如果正在前台激活状态 -> 若处于贴边模式则缩回屏幕外，否则隐藏到后台托盘
-        /// </summary>
         public void ToggleWindowByShortcut()
         {
             IntPtr hwnd = FindQuickMemoWindow();
@@ -353,7 +583,6 @@ namespace QuickMemo
             IntPtr fg = GetForegroundWindow();
             if (fg == hwnd)
             {
-                // 当前已在前台 -> 再按一次快捷键立即收起
                 if (_dockEdge != DockEdge.None)
                 {
                     CollapseToOutside();
@@ -480,7 +709,6 @@ namespace QuickMemo
             int targetX = _expandedBounds.X;
             int targetY = _expandedBounds.Y;
 
-            // 将窗口彻底移到屏幕可视区域外面（只留 1px 在屏幕外侧边缘）
             if (_dockEdge == DockEdge.Right)
             {
                 targetX = work.Right - 1;
@@ -497,7 +725,6 @@ namespace QuickMemo
             SetWindowPos(hwnd, HWND_TOPMOST, targetX, targetY, _expandedBounds.Width, _expandedBounds.Height, SWP_NOACTIVATE);
             _isCollapsedOutside = true;
 
-            // 在屏幕边缘显示小巧的「⚡ 闪念」悬浮唤醒侧边条
             _edgePeekForm.ShowAtEdge(_dockEdge, scr.WorkingArea, _expandedBounds);
         }
 
@@ -547,7 +774,6 @@ namespace QuickMemo
             {
                 if (_wasWindowAlive)
                 {
-                    // 用户点击了右上角 × 关闭了窗口 -> 保留在后台托盘
                     _wasWindowAlive = false;
                     _targetHwnd = IntPtr.Zero;
                     _isCollapsedOutside = false;
@@ -575,7 +801,6 @@ namespace QuickMemo
             bool isMouseDown = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
             Point cursor = Cursor.Position;
 
-            // 如果当前已经缩在屏幕外面：检测鼠标是否碰到了屏幕边缘
             if (_isCollapsedOutside)
             {
                 Screen scr = Screen.FromRectangle(_expandedBounds);
@@ -605,14 +830,12 @@ namespace QuickMemo
                 return;
             }
 
-            // 窗口处于展开状态：检查位置是否贴近屏幕左/右/上边缘
             RECT rect;
             if (!GetWindowRect(hwnd, out rect)) return;
             Rectangle winRect = rect.ToRectangle();
             Screen currentScreen = Screen.FromRectangle(winRect);
             Rectangle screenBounds = currentScreen.WorkingArea;
 
-            // 当鼠标松开时，根据窗口距离屏幕边缘的距离自动判断贴边或解除贴边
             if (!isMouseDown)
             {
                 const int snapThreshold = 18;
@@ -635,7 +858,6 @@ namespace QuickMemo
                 }
                 else if (_dockEdge != DockEdge.None)
                 {
-                    // 如果用户把窗口拖离了边缘，自动解除贴边模式
                     bool farFromRight = Math.Abs(winRect.Right - screenBounds.Right) > unsnapThreshold;
                     bool farFromLeft = Math.Abs(winRect.Left - screenBounds.Left) > unsnapThreshold;
                     bool farFromTop = Math.Abs(winRect.Top - screenBounds.Top) > unsnapThreshold;
@@ -647,7 +869,6 @@ namespace QuickMemo
                 }
             }
 
-            // 如果处于贴边模式，且鼠标移出了窗口范围 -> 延迟 450ms 自动缩到屏幕外面
             if (_dockEdge != DockEdge.None && !isMouseDown)
             {
                 Rectangle inflated = Rectangle.Inflate(winRect, 12, 12);
@@ -744,7 +965,6 @@ namespace QuickMemo
                 IntPtr hwnd = FindQuickMemoWindow();
                 if (hwnd != IntPtr.Zero && _isCollapsedOutside)
                 {
-                    // 退出前恢复窗口位置，避免下次打开留在屏幕外
                     ExpandFromOutside(false);
                 }
             }
@@ -785,12 +1005,48 @@ namespace QuickMemo
     }
 
     /// <summary>
-    /// 当主窗口缩到屏幕外面时，贴在屏幕边缘的迷你「⚡ 闪念」唤醒条（鼠标移上去立即滑出主窗口）
+    /// 苹果 macOS / iPadOS 风格透明磨砂毛玻璃侧边悬浮胶囊 (Frosted Acrylic Glass Pill)
+    /// 结合 Windows DWM SetWindowCompositionAttribute 实时背景高斯模糊 + GDI+ 镜面高光内边框渲染
     /// </summary>
     public class EdgePeekForm : Form
     {
+        #region DWM Frosted Acrylic Glass Interop
+
+        [DllImport("user32.dll")]
+        private static extern int SetWindowCompositionAttribute(IntPtr hwnd, ref WindowCompositionAttributeData data);
+
+        [DllImport("dwmapi.dll")]
+        private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct AccentPolicy
+        {
+            public int AccentState;
+            public int AccentFlags;
+            public uint GradientColor;
+            public int AnimationId;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct WindowCompositionAttributeData
+        {
+            public int Attribute;
+            public IntPtr Data;
+            public int SizeOfData;
+        }
+
+        private const int WCA_ACCENT_POLICY = 19;
+        private const int ACCENT_ENABLE_BLURBEHIND = 3;
+        private const int ACCENT_ENABLE_ACRYLICBLURBEHIND = 4;
+        private const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
+        private const int DWMWCP_ROUND = 2;
+
+        #endregion
+
         public event EventHandler MouseEnterTrigger;
         public event EventHandler ClickTrigger;
+
+        private DockEdge _currentEdge = DockEdge.Right;
 
         public EdgePeekForm()
         {
@@ -798,11 +1054,10 @@ namespace QuickMemo
             ShowInTaskbar = false;
             TopMost = true;
             StartPosition = FormStartPosition.Manual;
-            BackColor = Color.FromArgb(37, 99, 235);
-            ForeColor = Color.White;
-            Opacity = 0.92;
-            Width = 26;
-            Height = 96;
+            // 使用纯黑底配合 DWM Acrylic 透明通道合成，让背后桌面呈现真实高斯模糊磨砂感
+            BackColor = Color.Black;
+            Width = 28;
+            Height = 108;
             Cursor = Cursors.Hand;
             DoubleBuffered = true;
 
@@ -821,60 +1076,191 @@ namespace QuickMemo
             get { return true; }
         }
 
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                CreateParams cp = base.CreateParams;
+                // WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOREDIRECTIONBITMAP compatible
+                cp.ExStyle |= 0x00000080;
+                return cp;
+            }
+        }
+
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            EnableAppleFrostedBlur();
+        }
+
+        private void EnableAppleFrostedBlur()
+        {
+            try
+            {
+                // 1. 启用 Windows 11 硬件抗锯齿圆角 (DWMWCP_ROUND)
+                int cornerPref = DWMWCP_ROUND;
+                DwmSetWindowAttribute(Handle, DWMWA_WINDOW_CORNER_PREFERENCE, ref cornerPref, sizeof(int));
+            }
+            catch { }
+
+            try
+            {
+                // 2. 启用 DWM Acrylic 实时高斯模糊磨砂背景 (AABBGGRR: 半透明冰川灰白磨砂层)
+                var accent = new AccentPolicy
+                {
+                    AccentState = ACCENT_ENABLE_ACRYLICBLURBEHIND,
+                    AccentFlags = 2,
+                    GradientColor = 0x50F8FAFC // 约 31% 冰白磨砂叠加高斯模糊
+                };
+
+                int size = Marshal.SizeOf(accent);
+                IntPtr ptr = Marshal.AllocHGlobal(size);
+                try
+                {
+                    Marshal.StructureToPtr(accent, ptr, false);
+                    var data = new WindowCompositionAttributeData
+                    {
+                        Attribute = WCA_ACCENT_POLICY,
+                        Data = ptr,
+                        SizeOfData = size
+                    };
+                    SetWindowCompositionAttribute(Handle, ref data);
+                }
+                finally
+                {
+                    Marshal.FreeHGlobal(ptr);
+                }
+            }
+            catch
+            {
+                Opacity = 0.86;
+            }
+        }
+
         public void ShowAtEdge(DockEdge edge, Rectangle workArea, Rectangle expandedBounds)
         {
+            _currentEdge = edge;
             if (edge == DockEdge.Top)
             {
-                Width = 96;
-                Height = 24;
-                int x = Math.Max(workArea.Left + 20, Math.Min(expandedBounds.Left + expandedBounds.Width / 2 - 48, workArea.Right - 116));
-                int y = workArea.Top;
+                Width = 108;
+                Height = 28;
+                int x = Math.Max(workArea.Left + 24, Math.Min(expandedBounds.Left + expandedBounds.Width / 2 - 54, workArea.Right - 132));
+                int y = workArea.Top + 4;
                 SetBounds(x, y, Width, Height);
             }
             else if (edge == DockEdge.Left)
             {
-                Width = 26;
-                Height = 96;
-                int x = workArea.Left;
-                int y = Math.Max(workArea.Top + 40, Math.Min(expandedBounds.Top + 80, workArea.Bottom - 120));
+                Width = 28;
+                Height = 108;
+                int x = workArea.Left + 4;
+                int y = Math.Max(workArea.Top + 40, Math.Min(expandedBounds.Top + 90, workArea.Bottom - 130));
                 SetBounds(x, y, Width, Height);
             }
             else
             {
-                Width = 26;
-                Height = 96;
-                int x = workArea.Right - Width;
-                int y = Math.Max(workArea.Top + 40, Math.Min(expandedBounds.Top + 80, workArea.Bottom - 120));
+                Width = 28;
+                Height = 108;
+                int x = workArea.Right - Width - 4;
+                int y = Math.Max(workArea.Top + 40, Math.Min(expandedBounds.Top + 90, workArea.Bottom - 130));
                 SetBounds(x, y, Width, Height);
             }
 
             if (!Visible)
             {
                 Show();
+                EnableAppleFrostedBlur();
             }
             Invalidate();
         }
 
         protected override void OnPaint(PaintEventArgs e)
         {
-            base.OnPaint(e);
-            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-            using (var font = new Font("Microsoft YaHei UI", 9f, FontStyle.Bold))
-            using (var brush = new SolidBrush(Color.White))
+            Graphics g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+
+            RectangleF rect = new RectangleF(1f, 1f, Width - 2f, Height - 2f);
+            float radius = Math.Min(Width, Height) * 0.46f;
+
+            using (GraphicsPath pillPath = AppIconRenderer.CreateRoundedRectPath(rect, radius))
             {
-                var sf = new StringFormat
+                // 苹果磨砂柔光渐变层 (冰川白高光 -> 半透蓝灰微光)
+                using (var glassBrush = new LinearGradientBrush(
+                    rect,
+                    Color.FromArgb(68, 255, 255, 255),
+                    Color.FromArgb(32, 148, 163, 184),
+                    LinearGradientMode.Vertical))
                 {
-                    Alignment = StringAlignment.Center,
-                    LineAlignment = StringAlignment.Center
-                };
-                if (Width > Height)
-                {
-                    e.Graphics.DrawString("⚡ 闪念", font, brush, ClientRectangle, sf);
+                    g.FillPath(glassBrush, pillPath);
                 }
-                else
+
+                // 苹果标志性的 1px 镜面高光内边框 (Specular Highlight Border)
+                using (var borderBrush = new LinearGradientBrush(
+                    rect,
+                    Color.FromArgb(185, 255, 255, 255),
+                    Color.FromArgb(75, 255, 255, 255),
+                    LinearGradientMode.ForwardDiagonal))
+                using (var borderPen = new Pen(borderBrush, 1.25f))
                 {
-                    e.Graphics.DrawString("⚡\n闪\n念", font, brush, ClientRectangle, sf);
+                    g.DrawPath(borderPen, pillPath);
                 }
+            }
+
+            if (_currentEdge == DockEdge.Top)
+            {
+                // 水平胶囊布局：左侧微光圆标 + 右侧 iOS 风格磨砂呼吸握把条
+                float badgeSize = 16f;
+                float badgeX = 10f;
+                float badgeY = (Height - badgeSize) / 2f;
+                DrawMiniBadge(g, badgeX, badgeY, badgeSize);
+
+                RectangleF barRect = new RectangleF(34f, (Height - 4.5f) / 2f, 58f, 4.5f);
+                using (GraphicsPath barPath = AppIconRenderer.CreateRoundedRectPath(barRect, 2.25f))
+                using (var barBrush = new SolidBrush(Color.FromArgb(215, 255, 255, 255)))
+                {
+                    g.FillPath(barBrush, barPath);
+                }
+            }
+            else
+            {
+                // 垂直胶囊布局：上方微光星芒徽标 + 下方 iOS 风格磨砂呼吸握把条
+                float badgeSize = 17f;
+                float badgeX = (Width - badgeSize) / 2f;
+                float badgeY = 12f;
+                DrawMiniBadge(g, badgeX, badgeY, badgeSize);
+
+                RectangleF barRect = new RectangleF((Width - 4.5f) / 2f, 38f, 4.5f, 52f);
+                using (GraphicsPath barPath = AppIconRenderer.CreateRoundedRectPath(barRect, 2.25f))
+                using (var barBrush = new LinearGradientBrush(
+                    barRect,
+                    Color.FromArgb(230, 255, 255, 255),
+                    Color.FromArgb(145, 226, 232, 240),
+                    LinearGradientMode.Vertical))
+                {
+                    g.FillPath(barBrush, barPath);
+                }
+            }
+        }
+
+        private void DrawMiniBadge(Graphics g, float x, float y, float size)
+        {
+            RectangleF r = new RectangleF(x, y, size, size);
+            using (var brush = new LinearGradientBrush(
+                r,
+                Color.FromArgb(235, 99, 102, 241),
+                Color.FromArgb(235, 6, 182, 212),
+                LinearGradientMode.ForwardDiagonal))
+            {
+                g.FillEllipse(brush, r);
+            }
+
+            float cx = x + size / 2f;
+            float cy = y + size / 2f;
+            float sr = size * 0.34f;
+            using (GraphicsPath star = AppIconRenderer.CreateFourPointStarPath(cx, cy, sr, sr * 0.30f))
+            using (var sb = new SolidBrush(Color.White))
+            {
+                g.FillPath(sb, star);
             }
         }
     }
@@ -882,15 +1268,27 @@ namespace QuickMemo
     internal static class Program
     {
         [STAThread]
-        private static void Main()
+        private static void Main(string[] args)
         {
+            string appRoot = AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\', '/');
+
+            // 支持命令行仅生成图标 (--gen-icons)
+            if (args != null && args.Length > 0 && args[0] == "--gen-icons")
+            {
+                string iconDir = Path.Combine(appRoot, "src-tauri", "icons");
+                if (!Directory.Exists(iconDir)) Directory.CreateDirectory(iconDir);
+                AppIconRenderer.SaveIconFiles(
+                    Path.Combine(iconDir, "icon.png"),
+                    Path.Combine(iconDir, "icon.ico")
+                );
+                return;
+            }
+
             bool createdNew;
             using (var mutex = new Mutex(true, "QuickMemo_Desktop_SingleInstance_Mutex", out createdNew))
             {
-                string appRoot = AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\', '/');
                 if (!createdNew)
                 {
-                    // 已在后台运行 -> 写入唤醒指令唤醒主窗口
                     try
                     {
                         string cmdFile = Path.Combine(appRoot, ".window-cmd.json");

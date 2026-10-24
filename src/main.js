@@ -216,7 +216,7 @@ function renderHeader() {
   return `
     <header class="topbar">
       <div class="brand" id="btn-go-capture">
-        <div class="brand-logo">⚡</div>
+        <img src="/src-tauri/icons/icon.png" class="brand-logo-img" alt="QuickMemo" />
         <div>
           <div class="brand-title">QuickMemo <span class="brand-sub">闪念收纳盒</span></div>
         </div>
