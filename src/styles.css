@@ -1910,3 +1910,80 @@ body {
   justify-content: flex-end;
   gap: 8px;
 }
+
+/* 打包迁移与 GitHub 私有仓库同步样式 */
+.tool-btn.primary-outline {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-weight: 600;
+}
+
+.tool-btn.primary-outline:hover {
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.zip-export-toast {
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  border-radius: 8px;
+  color: #065f46;
+  font-size: 12.5px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.git-status-banner {
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  background: #f8fafc;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.git-status-banner.linked {
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+}
+
+.git-status-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.git-badge {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.git-remote-code {
+  font-family: Consolas, monospace;
+  font-size: 12px;
+  background: rgba(15, 23, 42, 0.06);
+  padding: 2px 7px;
+  border-radius: 5px;
+  color: var(--text-main);
+}
+
+.git-status-sub {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.git-actions-bar {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}

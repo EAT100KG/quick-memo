@@ -354,5 +354,29 @@ export const Bridge = {
       method: 'POST',
       body: JSON.stringify({ message, history })
     });
+  },
+
+  async exportVaultZip() {
+    return apiRequest('/api/vault/export-zip', {
+      method: 'POST'
+    });
+  },
+
+  async getVaultGitStatus() {
+    return apiRequest('/api/vault/git-status');
+  },
+
+  async linkVaultGit(payload) {
+    return apiRequest('/api/vault/git-link', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  async syncVaultGit(action = 'push') {
+    return apiRequest('/api/vault/git-sync', {
+      method: 'POST',
+      body: JSON.stringify({ action })
+    });
   }
 };

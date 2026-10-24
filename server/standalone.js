@@ -24,6 +24,13 @@ import {
   removeMemoFromDocIndex
 } from './doc-indexer.js';
 import { askVaultAssistant } from './chat-assistant.js';
+import {
+  exportVaultToZip,
+  getVaultGitStatus,
+  linkVaultToGitHub,
+  syncVaultGit,
+  triggerAutoVaultGitSync
+} from './vault-sync.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -224,6 +231,7 @@ export function startStandaloneServer(port = 1420, openWindow = false) {
           });
           try {
             indexSingleMemo(saved);
+            triggerAutoVaultGitSync();
           } catch {}
 
           return sendJson(res, 200, { memo: saved, classification });
@@ -263,6 +271,7 @@ export function startStandaloneServer(port = 1420, openWindow = false) {
           });
           try {
             indexSingleMemo(updated);
+            triggerAutoVaultGitSync();
           } catch {}
           return sendJson(res, 200, { memo: updated, classification });
         }
@@ -271,6 +280,7 @@ export function startStandaloneServer(port = 1420, openWindow = false) {
           const updated = updateMemo(body.id, body.patch || {});
           try {
             indexSingleMemo(updated);
+            triggerAutoVaultGitSync();
           } catch {}
           return sendJson(res, 200, { memo: updated });
         }
@@ -279,6 +289,7 @@ export function startStandaloneServer(port = 1420, openWindow = false) {
           const updated = renameAttachment(body.id, Number(body.attIndex), body.newName);
           try {
             indexSingleMemo(updated);
+            triggerAutoVaultGitSync();
           } catch {}
           return sendJson(res, 200, { memo: updated });
         }
@@ -287,8 +298,23 @@ export function startStandaloneServer(port = 1420, openWindow = false) {
           const delRes = deleteMemo(body.id);
           try {
             removeMemoFromDocIndex(body.id);
+            triggerAutoVaultGitSync();
           } catch {}
           return sendJson(res, 200, delRes);
+        }
+        if (url.pathname === '/api/vault/export-zip' && req.method === 'POST') {
+          return sendJson(res, 200, exportVaultToZip());
+        }
+        if (url.pathname === '/api/vault/git-status' && req.method === 'GET') {
+          return sendJson(res, 200, getVaultGitStatus());
+        }
+        if (url.pathname === '/api/vault/git-link' && req.method === 'POST') {
+          const body = await readJsonBody(req);
+          return sendJson(res, 200, linkVaultToGitHub(body));
+        }
+        if (url.pathname === '/api/vault/git-sync' && req.method === 'POST') {
+          const body = await readJsonBody(req);
+          return sendJson(res, 200, syncVaultGit(body));
         }
         if (url.pathname === '/api/index/status' && req.method === 'GET') {
           return sendJson(res, 200, getDocIndexStatus());

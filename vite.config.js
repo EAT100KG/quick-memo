@@ -20,6 +20,12 @@ import {
   removeMemoFromDocIndex
 } from './server/doc-indexer.js';
 import { askVaultAssistant } from './server/chat-assistant.js';
+import {
+  exportVaultToZip,
+  getVaultGitStatus,
+  linkVaultToGitHub,
+  syncVaultGit
+} from './server/vault-sync.js';
 
 function readJsonBody(req) {
   return new Promise((resolve, reject) => {
@@ -206,6 +212,20 @@ function quickMemoLocalServerPlugin() {
               history: body.history || []
             });
             return sendJson(res, 200, answer);
+          }
+          if (url.pathname === '/api/vault/export-zip' && req.method === 'POST') {
+            return sendJson(res, 200, exportVaultToZip());
+          }
+          if (url.pathname === '/api/vault/git-status' && req.method === 'GET') {
+            return sendJson(res, 200, getVaultGitStatus());
+          }
+          if (url.pathname === '/api/vault/git-link' && req.method === 'POST') {
+            const body = await readJsonBody(req);
+            return sendJson(res, 200, linkVaultToGitHub(body));
+          }
+          if (url.pathname === '/api/vault/git-sync' && req.method === 'POST') {
+            const body = await readJsonBody(req);
+            return sendJson(res, 200, syncVaultGit(body));
           }
           if (url.pathname === '/api/open-explorer' && req.method === 'POST') {
             const body = await readJsonBody(req);

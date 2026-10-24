@@ -46,7 +46,14 @@ const state = {
     totalChars: 0,
     lastIndexedAt: ''
   },
-  chatMessages: [] // [{ id, role: 'user'|'assistant', content, sources, aiUsed, errorWarning, time }]
+  chatMessages: [], // [{ id, role: 'user'|'assistant', content, sources, aiUsed, errorWarning, time }]
+
+  // 打包迁移与 GitHub 私有仓库同步状态
+  exportingZip: false,
+  lastZipExport: null,
+  vaultGitStatus: null,
+  gitSyncing: false,
+  gitFeedback: null
 };
 
 function isPdfAttachment(att = {}) {
@@ -198,15 +205,19 @@ async function init() {
   state.loading = true;
   render();
   try {
-    const [config, memos, indexStats] = await Promise.all([
+    const [config, memos, indexStats, vaultGitStatus] = await Promise.all([
       Bridge.getConfig(),
       Bridge.listMemos(),
-      Bridge.getIndexStatus().catch(() => null)
+      Bridge.getIndexStatus().catch(() => null),
+      Bridge.getVaultGitStatus().catch(() => null)
     ]);
     state.config = config;
     state.memos = memos;
     if (indexStats) {
       state.indexStats = indexStats;
+    }
+    if (vaultGitStatus) {
+      state.vaultGitStatus = vaultGitStatus;
     }
     if (memos.length > 0) {
       state.activeMemoId = memos[0].id;
@@ -217,6 +228,21 @@ async function init() {
     state.loading = false;
     render();
     focusCaptureInput();
+  }
+}
+
+async function handleExportVaultZip() {
+  if (state.exportingZip) return;
+  state.exportingZip = true;
+  render();
+  try {
+    const res = await Bridge.exportVaultZip();
+    state.lastZipExport = res;
+  } catch (err) {
+    alert(`打包失败：${err.message}`);
+  } finally {
+    state.exportingZip = false;
+    render();
   }
 }
 
@@ -386,6 +412,9 @@ function renderHeader() {
         </button>
         <button class="ghost-btn" id="btn-win-dock-right" title="将窗口贴靠并缩到屏幕右侧外，鼠标移到桌面右边缘或按 Alt+Space 即可滑出">
           ⇥ 缩到屏幕外
+        </button>
+        <button class="ghost-btn" id="btn-topbar-export-zip" title="一键将本地 Markdown 仓库所有文件打包为 .zip 压缩包并打开所在文件夹" ${state.exportingZip ? 'disabled' : ''}>
+          📦 ${state.exportingZip ? '打包中...' : '一键打包迁移'}
         </button>
         <button class="ghost-btn" id="btn-open-vault-folder" title="在 Windows 资源管理器中打开本地 Markdown 文件夹">
           📂 打开本地库
@@ -825,12 +854,87 @@ function renderSettingsView() {
       </section>
 
       <section class="settings-card">
-        <h3>📂 本地 Markdown 仓库路径 (Obsidian 兼容)</h3>
-        <p class="settings-hint">所有记录都会直接生成带 Frontmatter 的 <code>.md</code> 文件并按分类建子文件夹。你可以直接将此路径指向你的 Obsidian 仓库目录！</p>
+        <h3>📂 本地 Markdown 仓库路径与一键打包迁移 (Obsidian 兼容)</h3>
+        <p class="settings-hint">所有记录都会直接生成带 Frontmatter 的 <code>.md</code> 文件并按分类建子文件夹。你可以直接将此路径指向你的 Obsidian 仓库目录，或一键打包成 <code>.zip</code> 迁移到其他电脑！</p>
         <div class="vault-path-row">
           <input type="text" id="cfg-vault-path" value="${escapeHtml(cfg.vaultPath || '')}" />
-          <button class="tool-btn" id="btn-open-vault-in-settings">在资源管理器中查看</button>
+          <button class="tool-btn" id="btn-open-vault-in-settings">📂 打开目录</button>
+          <button class="tool-btn primary-outline" id="btn-export-vault-zip" ${state.exportingZip ? 'disabled' : ''}>
+            ${state.exportingZip ? '⏳ 正在打包...' : '📦 一键打包 .zip 迁移'}
+          </button>
         </div>
+        ${state.lastZipExport ? `
+          <div class="zip-export-toast">
+            <span>✅ 已打包完成：<strong>${escapeHtml(state.lastZipExport.zipFileName)}</strong>（共 ${state.lastZipExport.fileCount} 个文件 · ${escapeHtml(state.lastZipExport.sizeFormatted)}）</span>
+            <button class="mini-btn" data-open-md="${escapeHtml(state.lastZipExport.zipAbsPath)}">📂 在资源管理器查看</button>
+          </div>
+        ` : ''}
+      </section>
+
+      <section class="settings-card">
+        <h3>🔒 关联 GitHub 私有仓库（云端备份与跨设备同步）</h3>
+        <p class="settings-hint">
+          将本地 <code>vault/</code> 目录作为独立的 Git 仓库关联到你的 <strong>GitHub 私有仓库 (Private Repo)</strong>，与软件源码完全隔离，保护你的私人笔记与文档安全。
+        </p>
+
+        ${(() => {
+          const gitSt = state.vaultGitStatus || {};
+          const currentRemote = gitSt.remoteUrl || cfg.vaultGit?.remoteUrl || '';
+          const ghUser = gitSt.ghUser || 'TeaGo-lab';
+          const defaultPrivateUrl = `https://github.com/${ghUser}/quick-memo-vault.git`;
+
+          return `
+            <div class="git-status-banner ${currentRemote ? 'linked' : 'unlinked'}">
+              <div class="git-status-main">
+                <span class="git-badge">${currentRemote ? '🟢 已关联私有库' : '⚪ 尚未绑定远程仓库'}</span>
+                <code class="git-remote-code">${escapeHtml(currentRemote || '本地 Vault 尚未绑定 GitHub 远程地址')}</code>
+              </div>
+              ${gitSt.lastCommit ? `
+                <div class="git-status-sub">
+                  最近同步提交：${escapeHtml(gitSt.lastCommit)} · 待同步变更：<strong>${gitSt.pendingChanges || 0}</strong> 项
+                </div>
+              ` : ''}
+            </div>
+
+            <div class="form-grid" style="margin-top: 12px;">
+              <label class="form-field full">
+                <span>GitHub 私有仓库地址 (HTTPS 或 SSH)</span>
+                <div class="vault-path-row">
+                  <input
+                    type="text"
+                    id="cfg-vault-git-url"
+                    value="${escapeHtml(currentRemote || defaultPrivateUrl)}"
+                    placeholder="例如：https://github.com/TeaGo-lab/quick-memo-vault.git"
+                  />
+                  <button class="tool-btn" id="btn-link-existing-repo" ${state.gitSyncing ? 'disabled' : ''}>
+                    🔗 绑定此地址并推送
+                  </button>
+                </div>
+              </label>
+
+              <label class="form-field-inline full">
+                <input type="checkbox" id="cfg-vault-git-autosync" ${(cfg.vaultGit?.autoSync || gitSt.autoSyncEnabled) ? 'checked' : ''} />
+                <span>每次新增或修改闪念后，自动在后台静默提交并推送到 GitHub 私有库</span>
+              </label>
+            </div>
+
+            <div class="git-actions-bar">
+              <button class="primary-submit-btn" id="btn-auto-create-private-repo" ${state.gitSyncing ? 'disabled' : ''} title="使用本机已登录的 GitHub 账号 (${escapeHtml(ghUser)}) 自动新建名为 quick-memo-vault 的私有仓库并推送">
+                🚀 ${state.gitSyncing ? '正在同步 GitHub...' : `一键在 ${escapeHtml(ghUser)} 下自动创建私有库并同步`}
+              </button>
+              ${currentRemote ? `
+                <button class="tool-btn" id="btn-vault-git-push" ${state.gitSyncing ? 'disabled' : ''}>☁️ 立即推送备份 (Push)</button>
+                <button class="tool-btn" id="btn-vault-git-pull" ${state.gitSyncing ? 'disabled' : ''}>⬇️ 从云端拉取 (Pull)</button>
+              ` : ''}
+            </div>
+
+            ${state.gitFeedback ? `
+              <div class="llm-test-status ${state.gitFeedback.ok ? 'ok' : 'err'}" style="margin-top: 10px; display: block;">
+                ${escapeHtml(state.gitFeedback.text)}
+              </div>
+            ` : ''}
+          `;
+        })()}
       </section>
 
       <section class="settings-card">
@@ -1694,11 +1798,139 @@ function bindEvents() {
   }
 
   // 设置页事件
+  const btnTopbarExportZip = document.getElementById('btn-topbar-export-zip');
+  if (btnTopbarExportZip) {
+    btnTopbarExportZip.addEventListener('click', handleExportVaultZip);
+  }
+
+  const btnExportZip = document.getElementById('btn-export-vault-zip');
+  if (btnExportZip) {
+    btnExportZip.addEventListener('click', handleExportVaultZip);
+  }
+
   const btnOpenVaultSettings = document.getElementById('btn-open-vault-in-settings');
   if (btnOpenVaultSettings) {
     btnOpenVaultSettings.addEventListener('click', () => {
       const val = document.getElementById('cfg-vault-path')?.value;
       Bridge.openInExplorer(val);
+    });
+  }
+
+  const btnLinkExistingRepo = document.getElementById('btn-link-existing-repo');
+  if (btnLinkExistingRepo) {
+    btnLinkExistingRepo.addEventListener('click', async () => {
+      const repoUrl = document.getElementById('cfg-vault-git-url')?.value.trim() || '';
+      const autoSync = document.getElementById('cfg-vault-git-autosync')?.checked ?? false;
+      if (!repoUrl) {
+        alert('请先输入 GitHub 私有仓库地址');
+        return;
+      }
+      state.gitSyncing = true;
+      state.gitFeedback = null;
+      render();
+      try {
+        const res = await Bridge.linkVaultGit({
+          repoUrl,
+          autoCreatePrivate: false,
+          autoSync
+        });
+        state.vaultGitStatus = res.status;
+        state.gitFeedback = {
+          ok: true,
+          text: `✅ 已成功绑定远程私有仓库 (${res.remoteUrl}) 并完成首次云端推送！`
+        };
+      } catch (err) {
+        state.gitFeedback = {
+          ok: false,
+          text: `❌ 绑定推送失败：${err.message}`
+        };
+      } finally {
+        state.gitSyncing = false;
+        render();
+      }
+    });
+  }
+
+  const btnAutoCreateRepo = document.getElementById('btn-auto-create-private-repo');
+  if (btnAutoCreateRepo) {
+    btnAutoCreateRepo.addEventListener('click', async () => {
+      const autoSync = document.getElementById('cfg-vault-git-autosync')?.checked ?? true;
+      state.gitSyncing = true;
+      state.gitFeedback = null;
+      render();
+      try {
+        const res = await Bridge.linkVaultGit({
+          autoCreatePrivate: true,
+          repoName: 'quick-memo-vault',
+          autoSync
+        });
+        state.vaultGitStatus = res.status;
+        state.config = await Bridge.getConfig();
+        state.gitFeedback = {
+          ok: true,
+          text: `🎉 已自动在你的 GitHub 账号下创建私有仓库 ${res.remoteUrl} 并推送全部本地 Markdown 笔记！`
+        };
+      } catch (err) {
+        state.gitFeedback = {
+          ok: false,
+          text: `❌ 自动创建失败：${err.message}`
+        };
+      } finally {
+        state.gitSyncing = false;
+        render();
+      }
+    });
+  }
+
+  const btnGitPush = document.getElementById('btn-vault-git-push');
+  if (btnGitPush) {
+    btnGitPush.addEventListener('click', async () => {
+      state.gitSyncing = true;
+      state.gitFeedback = null;
+      render();
+      try {
+        const res = await Bridge.syncVaultGit('push');
+        state.vaultGitStatus = res.status;
+        state.gitFeedback = {
+          ok: true,
+          text: `✅ 已推送同步到 GitHub 私有库 (${res.syncedAt})`
+        };
+      } catch (err) {
+        state.gitFeedback = {
+          ok: false,
+          text: `❌ 推送失败：${err.message}`
+        };
+      } finally {
+        state.gitSyncing = false;
+        render();
+      }
+    });
+  }
+
+  const btnGitPull = document.getElementById('btn-vault-git-pull');
+  if (btnGitPull) {
+    btnGitPull.addEventListener('click', async () => {
+      state.gitSyncing = true;
+      state.gitFeedback = null;
+      render();
+      try {
+        const res = await Bridge.syncVaultGit('pull');
+        state.vaultGitStatus = res.status;
+        state.memos = await Bridge.listMemos();
+        await refreshIndexStats();
+        state.gitFeedback = {
+          ok: true,
+          text: `✅ 已从 GitHub 私有库拉取最新笔记并更新索引 (${res.syncedAt})`
+        };
+      } catch (err) {
+        state.gitFeedback = {
+          ok: false,
+          text: `❌ 拉取失败：${err.message}`
+        };
+      } finally {
+        state.gitSyncing = false;
+        render();
+      }
     });
   }
 
@@ -1762,6 +1994,11 @@ function bindEvents() {
       const saved = await Bridge.saveConfig({
         ...state.config,
         vaultPath,
+        vaultGit: {
+          ...(state.config.vaultGit || {}),
+          remoteUrl: document.getElementById('cfg-vault-git-url')?.value.trim() || state.config.vaultGit?.remoteUrl || '',
+          autoSync: document.getElementById('cfg-vault-git-autosync')?.checked ?? false
+        },
         llm: {
           ...state.config.llm,
           enabled,

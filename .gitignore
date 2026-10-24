@@ -12,7 +12,9 @@ src-tauri/gen/
 # User local Markdown vault data
 vault/*
 vault/.quick-memo-*
+vault/.git
 !vault/.gitkeep
+backups/
 
 # OS & Editor files
 .DS_Store
