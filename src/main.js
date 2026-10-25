@@ -1410,7 +1410,7 @@ function renderPrecheckModal() {
 }
 
 function renderAboutView() {
-  const localVer = state.updateCheck?.localVersion || state.appInfo?.version || '0.4.0';
+  const localVer = String(state.updateCheck?.localVersion || state.appInfo?.version || '0.5.0').replace(/^v/i, '');
   const chk = state.updateCheck;
   const repoUrl = state.appInfo?.repoUrl || 'https://github.com/TeaGo-lab/quick-memo';
   const releaseUrl = chk?.releaseUrl || `${repoUrl}/releases`;
@@ -1477,7 +1477,7 @@ function renderAboutView() {
             </div>
             <div class="version-box-meta">
               ${chk?.publishedAt
-                ? `发布于 ${escapeHtml(chk.publishedAt)}${chk.assetSize ? ` · 安装包 ${formatBytes(chk.assetSize)}` : ''}`
+                ? `发布于 ${escapeHtml(chk.publishedAt)}${chk.assetSize ? ` · 安装包 ${formatSize(chk.assetSize)}` : ''}`
                 : '支持一键拉取 QuickMemo-Windows-x64.zip'}
             </div>
           </div>
