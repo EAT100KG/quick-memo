@@ -501,31 +501,50 @@ namespace QuickMemo
             RegisterHotKey(_hotKeyWindow.Handle, HOTKEY_ID_TOGGLE, MOD_ALT, VK_SPACE);
         }
 
+        /// <summary>
+        /// 判断窗口是否为 QuickMemo 主窗口。
+        /// 只看标题前缀会误伤 VS Code 等同为 Chromium/Electron 的窗口（例如打开了 “QuickMemo-xxx.txt” 时标题也以 QuickMemo 开头），
+        /// 因此要求标题以完整应用名 “QuickMemo · ” 开头，并校验所属进程是 Edge / Tauri 应用本身。
+        /// </summary>
+        private static bool IsQuickMemoWindow(IntPtr hWnd)
+        {
+            var sb = new System.Text.StringBuilder(256);
+            if (GetWindowText(hWnd, sb, sb.Capacity) <= 0) return false;
+            string title = sb.ToString();
+            if (!title.StartsWith("QuickMemo · ")) return false;
+
+            var cls = new System.Text.StringBuilder(128);
+            GetClassName(hWnd, cls, cls.Capacity);
+            if (!cls.ToString().Contains("Chrome_WidgetWin")) return false;
+
+            try
+            {
+                uint pid;
+                GetWindowThreadProcessId(hWnd, out pid);
+                string procName = Process.GetProcessById((int)pid).ProcessName.ToLowerInvariant();
+                return procName == "msedge" || procName.Contains("quick-memo") || procName.Contains("quickmemo");
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         private IntPtr FindQuickMemoWindow()
         {
-            if (_targetHwnd != IntPtr.Zero && IsWindow(_targetHwnd))
+            if (_targetHwnd != IntPtr.Zero && IsWindow(_targetHwnd) && IsQuickMemoWindow(_targetHwnd))
             {
                 return _targetHwnd;
             }
+            _targetHwnd = IntPtr.Zero;
 
             IntPtr found = IntPtr.Zero;
             EnumWindows((hWnd, lParam) =>
             {
-                var sb = new System.Text.StringBuilder(256);
-                if (GetWindowText(hWnd, sb, sb.Capacity) > 0)
+                if (IsQuickMemoWindow(hWnd))
                 {
-                    string title = sb.ToString();
-                    if (title.Contains("QuickMemo · 闪念") || title.StartsWith("QuickMemo"))
-                    {
-                        var cls = new System.Text.StringBuilder(128);
-                        GetClassName(hWnd, cls, cls.Capacity);
-                        string clsName = cls.ToString();
-                        if (clsName.Contains("Chrome_WidgetWin"))
-                        {
-                            found = hWnd;
-                            return false;
-                        }
-                    }
+                    found = hWnd;
+                    return false;
                 }
                 return true;
             }, IntPtr.Zero);

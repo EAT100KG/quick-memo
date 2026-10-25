@@ -1,7 +1,7 @@
 {
   "name": "quick-memo",
   "private": true,
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "替代微信文件传输助手的极速桌面闪念与文件收纳盒，支持 LLM 自动分类归档为本地 Markdown",
   "type": "module",
   "scripts": {
