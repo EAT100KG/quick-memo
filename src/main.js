@@ -53,7 +53,14 @@ const state = {
   lastZipExport: null,
   vaultGitStatus: null,
   gitSyncing: false,
-  gitFeedback: null
+  gitFeedback: null,
+
+  // 关于与 GitHub Release 自动升级状态
+  appInfo: null,
+  updateCheck: null,
+  checkingUpdate: false,
+  performingUpdate: false,
+  updateFeedback: null
 };
 
 function isPdfAttachment(att = {}) {
@@ -267,11 +274,12 @@ async function init() {
   state.loading = true;
   render();
   try {
-    const [config, memos, indexStats, vaultGitStatus] = await Promise.all([
+    const [config, memos, indexStats, vaultGitStatus, appInfo] = await Promise.all([
       Bridge.getConfig(),
       Bridge.listMemos(),
       Bridge.getIndexStatus().catch(() => null),
-      Bridge.getVaultGitStatus().catch(() => null)
+      Bridge.getVaultGitStatus().catch(() => null),
+      Bridge.getAppInfo().catch(() => null)
     ]);
     state.config = config;
     state.memos = memos;
@@ -281,15 +289,97 @@ async function init() {
     if (vaultGitStatus) {
       state.vaultGitStatus = vaultGitStatus;
     }
+    if (appInfo) {
+      state.appInfo = appInfo;
+    }
     if (memos.length > 0) {
       state.activeMemoId = memos[0].id;
     }
+    // 后台静默检测一次最新 GitHub Release
+    handleCheckReleaseUpdate({ silent: true });
   } catch (err) {
     console.error('Initialization failed:', err);
   } finally {
     state.loading = false;
     render();
     focusCaptureInput();
+  }
+}
+
+async function handleCheckReleaseUpdate({ silent = false } = {}) {
+  if (state.checkingUpdate) return;
+  state.checkingUpdate = true;
+  if (!silent) {
+    state.updateFeedback = null;
+    render();
+  }
+  try {
+    const info = await Bridge.checkReleaseUpdate();
+    state.updateCheck = info;
+    if (!silent) {
+      if (info.hasUpdate) {
+        state.updateFeedback = {
+          ok: true,
+          text: `🎉 检测到 GitHub 新版本 ${info.latestTag}（当前本地版本 v${info.localVersion}），可点击下方按钮一键拉取升级！`
+        };
+      } else {
+        state.updateFeedback = {
+          ok: true,
+          text: `✅ 检测完成：当前本地版本 (v${info.localVersion}) 已与 GitHub 最新 Release (${info.latestTag}) 保持同步。`
+        };
+      }
+    }
+  } catch (err) {
+    if (!silent) {
+      state.updateFeedback = {
+        ok: false,
+        text: `❌ 检测 GitHub Release 失败：${err.message}`
+      };
+    }
+  } finally {
+    state.checkingUpdate = false;
+    render();
+  }
+}
+
+async function handlePerformReleaseUpdate() {
+  if (state.performingUpdate) return;
+  const targetVer = state.updateCheck?.latestTag || '最新 Release';
+  const hasNewer = Boolean(state.updateCheck?.hasUpdate);
+  const confirmMsg = hasNewer
+    ? `确定要从 GitHub 拉取最新发行包 (${targetVer}) 并自动升级吗？\n\n• 你的本地 Markdown 笔记库 (vault/) 与 API Key 配置完全保留，不会被覆盖\n• 升级完成后客户端将自动重启`
+    : `当前版本已是 ${targetVer}，确定要重新从 GitHub 拉取最新发行包并执行覆盖升级/修复更新吗？\n\n• 你的本地 Markdown 笔记库 (vault/) 与 API Key 配置完全保留\n• 更新完成后客户端将自动重启`;
+
+  if (!confirm(confirmMsg)) return;
+
+  state.performingUpdate = true;
+  state.updateFeedback = {
+    ok: true,
+    text: `⏳ 正在从 GitHub 下载最新发行包 (${targetVer}) 并校验解压，请稍候（约 5~15 秒）...`
+  };
+  render();
+
+  try {
+    const res = await Bridge.performReleaseUpdate({ autoRestart: true });
+    state.updateFeedback = {
+      ok: true,
+      text: `🎉 ${res.message}`
+    };
+    if (state.appInfo && res.targetVersion) {
+      state.appInfo.version = res.targetVersion;
+    }
+    if (state.updateCheck) {
+      state.updateCheck.localVersion = res.targetVersion;
+      state.updateCheck.hasUpdate = false;
+    }
+  } catch (err) {
+    state.updateFeedback = {
+      ok: false,
+      text: `❌ 升级更新失败：${err.message}`
+    };
+  } finally {
+    state.performingUpdate = false;
+    render();
   }
 }
 
@@ -465,6 +555,10 @@ function renderHeader() {
         <button class="nav-tab ${state.activeTab === 'settings' ? 'active' : ''}" data-tab="settings">
           <span>⚙️ AI 与目录设置</span>
           <span class="status-dot ${llmReady || isOllama ? 'on' : 'warn'}" title="${llmReady || isOllama ? 'LLM 自动归类已就绪' : '当前使用本地智能规则，点此配置 API Key'}"></span>
+        </button>
+        <button class="nav-tab ${state.activeTab === 'about' ? 'active' : ''}" data-tab="about">
+          <span>ℹ️ 关于</span>
+          ${state.updateCheck?.hasUpdate ? `<span class="update-badge-new" title="发现 GitHub 新版本 ${escapeHtml(state.updateCheck.latestTag)}">NEW</span>` : ''}
         </button>
       </nav>
 
@@ -1315,6 +1409,138 @@ function renderPrecheckModal() {
   `;
 }
 
+function renderAboutView() {
+  const localVer = state.updateCheck?.localVersion || state.appInfo?.version || '0.4.0';
+  const chk = state.updateCheck;
+  const repoUrl = state.appInfo?.repoUrl || 'https://github.com/TeaGo-lab/quick-memo';
+  const releaseUrl = chk?.releaseUrl || `${repoUrl}/releases`;
+  const hasUpdate = Boolean(chk?.hasUpdate);
+
+  return `
+    <main class="settings-shell about-shell">
+      <div class="settings-card about-hero-card">
+        <div class="about-hero-main">
+          <img src="/src-tauri/icons/icon.png" class="about-hero-logo" alt="QuickMemo" />
+          <div class="about-hero-info">
+            <div class="about-title-row">
+              <h2>QuickMemo · 闪念与文件 AI 收纳盒</h2>
+              <span class="version-pill">v${escapeHtml(localVer)}</span>
+            </div>
+            <p class="about-subtitle">
+              替代微信“文件传输助手”的极速桌面闪念、API Key 保险箱与多格式文档 AI 归档工具。所有内容均以纯净 Markdown 存储在本地，兼容 Obsidian 与 GitHub 私有库同步。
+            </p>
+            <div class="about-meta-links">
+              <button class="mini-btn primary" id="btn-open-github-repo" data-url="${escapeHtml(repoUrl)}">
+                🐙 访问 GitHub 仓库 (${escapeHtml(state.appInfo?.repo || 'TeaGo-lab/quick-memo')})
+              </button>
+              <button class="mini-btn" id="btn-open-release-url" data-url="${escapeHtml(releaseUrl)}">
+                📦 查看 GitHub Releases 页面
+              </button>
+              <button class="mini-btn" id="btn-open-app-root">
+                📂 打开程序安装目录
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-card">
+        <div class="about-update-header">
+          <div>
+            <h3>🚀 GitHub Release 版本检测与在线升级</h3>
+            <p class="settings-desc" style="margin-bottom: 0;">
+              自动连接 GitHub 官方仓库 <code>TeaGo-lab/quick-memo</code> 检测最新发行版，支持一键拉取最新包并执行热升级更新（升级过程自动保护本地 <code>vault/</code> 笔记库与 API Key 配置）。
+            </p>
+          </div>
+          <span class="update-status-pill ${hasUpdate ? 'has-update' : chk ? 'up-to-date' : 'idle'}">
+            ${state.checkingUpdate
+              ? '⏳ 正在检测...'
+              : hasUpdate
+                ? `🔥 发现新版本 ${escapeHtml(chk.latestTag)}`
+                : chk
+                  ? '✅ 当前已是最新版本'
+                  : '🔍 待检测'}
+          </span>
+        </div>
+
+        <div class="version-compare-grid">
+          <div class="version-box">
+            <div class="version-box-label">💻 当前本地版本</div>
+            <div class="version-box-val">v${escapeHtml(localVer)}</div>
+            <div class="version-box-meta">运行环境：Windows x64 桌面端</div>
+          </div>
+
+          <div class="version-box ${hasUpdate ? 'highlight-new' : ''}">
+            <div class="version-box-label">☁️ GitHub 最新 Release</div>
+            <div class="version-box-val">
+              ${chk ? escapeHtml(chk.latestTag) : state.checkingUpdate ? '检测中...' : '点击下方检测'}
+            </div>
+            <div class="version-box-meta">
+              ${chk?.publishedAt
+                ? `发布于 ${escapeHtml(chk.publishedAt)}${chk.assetSize ? ` · 安装包 ${formatBytes(chk.assetSize)}` : ''}`
+                : '支持一键拉取 QuickMemo-Windows-x64.zip'}
+            </div>
+          </div>
+        </div>
+
+        <div class="about-update-actions">
+          <button class="tool-btn primary-outline" id="btn-check-release-update" ${state.checkingUpdate || state.performingUpdate ? 'disabled' : ''}>
+            ${state.checkingUpdate ? '⏳ 正在检测 GitHub Release...' : '🔍 检测 GitHub 最新 Release'}
+          </button>
+
+          <button class="primary-submit-btn ${hasUpdate ? 'pulse-upgrade' : ''}" id="btn-perform-release-update" ${state.performingUpdate || state.checkingUpdate ? 'disabled' : ''}>
+            ${state.performingUpdate
+              ? '⏳ 正在拉取最新包并执行升级...'
+              : hasUpdate
+                ? `⚡ 立即拉取最新包 (${escapeHtml(chk.latestTag)}) 并升级重启`
+                : `🔄 拉取最新 Release 包 (${escapeHtml(chk?.latestTag || 'v' + localVer)}) 并覆盖更新`}
+          </button>
+        </div>
+
+        ${state.updateFeedback ? `
+          <div class="llm-test-status ${state.updateFeedback.ok ? 'ok' : 'err'}" style="margin-top: 12px;">
+            ${escapeHtml(state.updateFeedback.text)}
+          </div>
+        ` : ''}
+
+        ${chk?.releaseNotes ? `
+          <div class="release-notes-section">
+            <div class="release-notes-header">
+              <span>📋 最新版本更新日志 (${escapeHtml(chk.releaseName || chk.latestTag)})</span>
+              ${chk.checkedAt ? `<span class="release-checked-time">检测时间：${escapeHtml(chk.checkedAt)}</span>` : ''}
+            </div>
+            <div class="release-notes-box chat-md-body">
+              ${formatChatMarkdown(chk.releaseNotes)}
+            </div>
+          </div>
+        ` : ''}
+      </div>
+
+      <div class="settings-card">
+        <h3>⌨️ 效率快捷键与核心特性一览</h3>
+        <div class="about-feature-grid">
+          <div class="about-feature-item">
+            <div class="about-feature-title">⚡ 全局唤起与边缘隐藏</div>
+            <div class="about-feature-desc">随时按 <kbd>Alt + Space</kbd> 唤起或隐藏窗口；支持钉在最前与贴靠桌面右侧自动滑出。</div>
+          </div>
+          <div class="about-feature-item">
+            <div class="about-feature-title">🤖 OpenAI 兼容自动归档</div>
+            <div class="about-feature-desc">支持 DeepSeek、硅基流动、通义千问、OpenAI 与 Ollama，自动起标题、提炼摘要并重命名乱码附件。</div>
+          </div>
+          <div class="about-feature-item">
+            <div class="about-feature-title">🛡️ 查重拦截与密钥备注提醒</div>
+            <div class="about-feature-desc">归档前自动扫描 SHA-256 与全文查重；粘贴裸 API Key 自动提醒补充用途备注。</div>
+          </div>
+          <div class="about-feature-item">
+            <div class="about-feature-title">💬 闪念寻物助手 (RAG)</div>
+            <div class="about-feature-desc">自动索引 PDF/Word/Markdown 全文，右下角随时对话找文档、找 API Key 并支持一键复制。</div>
+          </div>
+        </div>
+      </div>
+    </main>
+  `;
+}
+
 export function render() {
   const app = document.getElementById('app');
   if (!app) return;
@@ -1329,6 +1555,8 @@ export function render() {
     bodyHtml = renderCaptureView();
   } else if (state.activeTab === 'vault') {
     bodyHtml = renderVaultView();
+  } else if (state.activeTab === 'about') {
+    bodyHtml = renderAboutView();
   } else {
     bodyHtml = renderSettingsView();
   }
@@ -1362,7 +1590,11 @@ function bindEvents() {
     btn.addEventListener('click', () => {
       state.activeTab = btn.getAttribute('data-tab');
       render();
-      if (state.activeTab === 'capture') focusCaptureInput();
+      if (state.activeTab === 'capture') {
+        focusCaptureInput();
+      } else if (state.activeTab === 'about' && !state.updateCheck && !state.checkingUpdate) {
+        handleCheckReleaseUpdate({ silent: false });
+      }
     });
   });
 
@@ -2078,6 +2310,29 @@ function bindEvents() {
       setTimeout(() => render(), 800);
     });
   }
+
+  // 关于页与版本升级事件绑定
+  document.getElementById('btn-check-release-update')?.addEventListener('click', () => {
+    handleCheckReleaseUpdate({ silent: false });
+  });
+
+  document.getElementById('btn-perform-release-update')?.addEventListener('click', () => {
+    handlePerformReleaseUpdate();
+  });
+
+  document.getElementById('btn-open-github-repo')?.addEventListener('click', (e) => {
+    const url = e.currentTarget.getAttribute('data-url') || 'https://github.com/TeaGo-lab/quick-memo';
+    window.open(url, '_blank');
+  });
+
+  document.getElementById('btn-open-release-url')?.addEventListener('click', (e) => {
+    const url = e.currentTarget.getAttribute('data-url') || 'https://github.com/TeaGo-lab/quick-memo/releases';
+    window.open(url, '_blank');
+  });
+
+  document.getElementById('btn-open-app-root')?.addEventListener('click', () => {
+    Bridge.openInExplorer(state.config?.vaultPath ? state.config.vaultPath.replace(/[\\/]vault$/i, '') : '');
+  });
 
   // 聊天泡泡与寻物助手事件绑定
   const btnToggleChat = document.getElementById('btn-toggle-chat-bubble');

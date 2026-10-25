@@ -31,6 +31,7 @@ import {
   syncVaultGit,
   triggerAutoVaultGitSync
 } from './vault-sync.js';
+import { getAppMetadata, checkReleaseUpdate, performReleaseUpdate } from './updater.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -313,6 +314,18 @@ export function startStandaloneServer(port = 1420, openWindow = false) {
         if (url.pathname === '/api/vault/git-sync' && req.method === 'POST') {
           const body = await readJsonBody(req);
           return sendJson(res, 200, syncVaultGit(body));
+        }
+        if (url.pathname === '/api/app/info' && req.method === 'GET') {
+          return sendJson(res, 200, getAppMetadata());
+        }
+        if (url.pathname === '/api/app/check-update' && req.method === 'GET') {
+          const info = await checkReleaseUpdate();
+          return sendJson(res, 200, info);
+        }
+        if (url.pathname === '/api/app/perform-update' && req.method === 'POST') {
+          const body = await readJsonBody(req);
+          const result = await performReleaseUpdate({ autoRestart: body.autoRestart !== false });
+          return sendJson(res, 200, result);
         }
         if (url.pathname === '/api/index/status' && req.method === 'GET') {
           return sendJson(res, 200, getDocIndexStatus());

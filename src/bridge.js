@@ -378,5 +378,20 @@ export const Bridge = {
       method: 'POST',
       body: JSON.stringify({ action })
     });
+  },
+
+  async getAppInfo() {
+    return apiRequest('/api/app/info');
+  },
+
+  async checkReleaseUpdate() {
+    return apiRequest('/api/app/check-update');
+  },
+
+  async performReleaseUpdate(autoRestart = true) {
+    return apiRequest('/api/app/perform-update', {
+      method: 'POST',
+      body: JSON.stringify({ autoRestart })
+    });
   }
 };
