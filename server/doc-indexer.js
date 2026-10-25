@@ -221,6 +221,25 @@ export function buildDocEntryForMemo(memo) {
     });
   }
 
+  // 3. 深度索引抓取到的网页链接正文内容
+  for (const page of memo.webPages || []) {
+    const pageText = [
+      page.title ? `网页标题：${page.title}` : '',
+      page.description ? `网页描述：${page.description}` : '',
+      page.extractedText || ''
+    ]
+      .filter(Boolean)
+      .join('\n')
+      .trim();
+
+    if (pageText) {
+      const label = `网页《${(page.title || page.url || '链接').slice(0, 32)}》`;
+      const pageChunks = splitTextIntoChunks(pageText, label);
+      chunks.push(...pageChunks);
+      totalChars += pageText.length;
+    }
+  }
+
   // 去重完全一致的 chunk
   const uniqueChunks = [];
   const seenTexts = new Set();
@@ -242,7 +261,8 @@ export function buildDocEntryForMemo(memo) {
     memo.category,
     memo.summary,
     ...(memo.tags || []),
-    ...indexedAttachments.map((a) => a.name)
+    ...indexedAttachments.map((a) => a.name),
+    ...(memo.webPages || []).map((p) => `${p.title || ''} ${p.url || ''}`)
   ].filter(Boolean).join(' ');
 
   return {

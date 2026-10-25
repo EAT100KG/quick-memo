@@ -118,26 +118,15 @@ function quickMemoLocalServerPlugin() {
           }
           if (url.pathname === '/api/memos/quick-save' && req.method === 'POST') {
             const body = await readJsonBody(req);
-            const config = getConfig();
             const rawAttachments = body.rawAttachments || [];
 
-            let classification;
-            if (body.manualCategory) {
-              const heur = heuristicClassify({
-                content: body.content,
-                attachments: rawAttachments,
-                categories: config.categories
-              });
-              classification = {
-                ...heur,
-                category: body.manualCategory
-              };
-            } else {
-              classification = await classifyWithLLM({
-                content: body.content,
-                attachments: rawAttachments
-              });
-            }
+            const llmResult = await classifyWithLLM({
+              content: body.content,
+              attachments: rawAttachments
+            });
+            const classification = body.manualCategory
+              ? { ...llmResult, category: body.manualCategory }
+              : llmResult;
 
             const renamedRawAttachments = rawAttachments.map((att, idx) => ({
               ...att,
@@ -153,6 +142,7 @@ function quickMemoLocalServerPlugin() {
               title: body.manualTitle || classification.title,
               summary: classification.summary,
               tags: classification.tags,
+              webPages: classification.webPages || [],
               aiClassified: classification.aiClassified
             });
 
@@ -177,6 +167,7 @@ function quickMemoLocalServerPlugin() {
               title: classification.title,
               summary: classification.summary,
               tags: classification.tags,
+              webPages: classification.webPages || target.webPages || [],
               aiClassified: classification.aiClassified
             });
             return sendJson(res, 200, { memo: updated, classification });
@@ -221,7 +212,7 @@ function quickMemoLocalServerPlugin() {
           }
           if (url.pathname === '/api/vault/git-link' && req.method === 'POST') {
             const body = await readJsonBody(req);
-            return sendJson(res, 200, linkVaultToGitHub(body));
+            return sendJson(res, 200, await linkVaultToGitHub(body));
           }
           if (url.pathname === '/api/vault/git-sync' && req.method === 'POST') {
             const body = await readJsonBody(req);

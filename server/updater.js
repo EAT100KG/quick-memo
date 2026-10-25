@@ -176,20 +176,30 @@ export async function performReleaseUpdate({ autoRestart = true } = {}) {
 
   let downloaded = false;
 
-  // 1. 优先通过 HTTP 下载最新 Release 的 QuickMemo-Windows-x64.zip
+  // 1. 优先通过 HTTP 下载最新 Release 的 QuickMemo-Windows-x64.zip（内置国内高速镜像自动回退）
   if (check.zipDownloadUrl) {
-    try {
-      const res = await fetch(check.zipDownloadUrl, {
-        headers: { 'User-Agent': 'QuickMemo-Desktop-Updater' },
-        signal: AbortSignal.timeout(45000)
-      });
-      if (res.ok) {
-        const arrayBuf = await res.arrayBuffer();
-        fs.writeFileSync(zipPath, Buffer.from(arrayBuf));
-        downloaded = true;
+    const candidateUrls = [
+      check.zipDownloadUrl,
+      `https://ghfast.top/${check.zipDownloadUrl}`,
+      `https://mirror.ghproxy.com/${check.zipDownloadUrl}`
+    ];
+    for (const dlUrl of candidateUrls) {
+      try {
+        const res = await fetch(dlUrl, {
+          headers: { 'User-Agent': 'QuickMemo-Desktop-Updater' },
+          signal: AbortSignal.timeout(25000)
+        });
+        if (res.ok) {
+          const arrayBuf = await res.arrayBuffer();
+          if (arrayBuf.byteLength > 10000) {
+            fs.writeFileSync(zipPath, Buffer.from(arrayBuf));
+            downloaded = true;
+            break;
+          }
+        }
+      } catch (err) {
+        console.warn(`[Updater] Download attempt failed (${dlUrl}):`, err.message);
       }
-    } catch (err) {
-      console.warn('[Updater] Direct zip download failed, trying gh CLI:', err.message);
     }
   }
 
@@ -239,6 +249,7 @@ with zipfile.ZipFile(sys.argv[1], 'r') as zf:
     'node_modules',
     '.git',
     '.webview-profile',
+    '.crawler-profile',
     '.quick-memo-config.json',
     '.window-cmd.json',
     'QuickMemo.exe'

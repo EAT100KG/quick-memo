@@ -50,10 +50,11 @@ const state = {
   },
   chatMessages: [], // [{ id, role: 'user'|'assistant', content, sources, aiUsed, errorWarning, time }]
 
-  // 打包迁移与 GitHub 私有仓库同步状态
+  // 打包迁移与 GitHub/Gitee 私有仓库同步状态
   exportingZip: false,
   lastZipExport: null,
   vaultGitStatus: null,
+  gitProviderTab: 'gitee', // 'gitee' | 'github'
   gitSyncing: false,
   gitFeedback: null,
 
@@ -291,6 +292,9 @@ async function init() {
     }
     if (vaultGitStatus) {
       state.vaultGitStatus = vaultGitStatus;
+      if (vaultGitStatus.provider === 'github' || vaultGitStatus.provider === 'gitee') {
+        state.gitProviderTab = vaultGitStatus.provider;
+      }
     }
     if (appInfo) {
       state.appInfo = appInfo;
@@ -682,7 +686,9 @@ function renderCaptureView() {
           <div class="footer-right">
             <span class="shortcut-hint">Ctrl + Enter 立即归档</span>
             <button class="primary-submit-btn" id="btn-submit-memo" ${state.saving ? 'disabled' : ''}>
-              ${state.saving ? '⏳ AI 正在分类落盘...' : '✨ 归档保存'}
+              ${state.saving
+                ? (/https?:\/\//i.test(state.draftContent) ? '🌐 正在打开链接读取内容并 AI 归档...' : '⏳ AI 正在分类落盘...')
+                : '✨ 归档保存'}
             </button>
           </div>
         </div>
@@ -878,7 +884,9 @@ function renderMemoDetail(memo) {
 
         <div class="detail-actions">
           <button class="tool-btn" id="btn-copy-memo" data-id="${escapeHtml(memo.id)}">📋 复制原文</button>
-          <button class="tool-btn" id="btn-reclassify-memo" data-id="${escapeHtml(memo.id)}">✨ 重新 AI 归类</button>
+          <button class="tool-btn primary-outline" id="btn-reclassify-memo" data-id="${escapeHtml(memo.id)}">
+            ${/https?:\/\//i.test(memo.content || '') ? '🌐 打开链接抓取并重新 AI 归类' : '✨ 重新 AI 归类'}
+          </button>
           <button class="tool-btn" data-open-md="${escapeHtml(memo.mdAbsPath)}">📂 定位 .md 文件</button>
           <button class="tool-btn danger" id="btn-delete-memo" data-id="${escapeHtml(memo.id)}">🗑️ 删除</button>
         </div>
@@ -960,6 +968,35 @@ function renderMemoDetail(memo) {
             <div class="detail-readonly-body">${formatChatMarkdown(cleanBody)}</div>
           `;
         })()}
+
+        ${Array.isArray(memo.webPages) && memo.webPages.length > 0 ? `
+          <div class="detail-webpages-section">
+            <div class="section-caption">🌐 已自动抓取并建立全文索引的网页内容 (${memo.webPages.length})</div>
+            <div class="detail-webpages-list">
+              ${memo.webPages.map((page) => `
+                <div class="detail-webpage-card">
+                  <div class="detail-webpage-header">
+                    <div class="detail-webpage-title-wrap">
+                      <span class="webpage-badge">网页正文</span>
+                      <a href="${escapeHtml(page.url || '')}" target="_blank" rel="noopener" class="detail-webpage-title">
+                        ${escapeHtml(page.title || page.url || '网页链接')}
+                      </a>
+                    </div>
+                    <span class="detail-webpage-meta">
+                      ${page.extractedText ? `已提取 ${page.extractedText.length} 字 · 已入库索引` : ''}
+                      ${page.fetchedAt ? ` · ${escapeHtml(page.fetchedAt)}` : ''}
+                    </span>
+                  </div>
+                  ${page.extractedText ? `
+                    <div class="detail-webpage-body chat-md-body">
+                      ${formatChatMarkdown(page.extractedText.slice(0, 3000))}
+                    </div>
+                  ` : ''}
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        ` : ''}
       </div>
     </div>
   `;
@@ -1028,22 +1065,39 @@ function renderSettingsView() {
       </section>
 
       <section class="settings-card">
-        <h3>🔒 关联 GitHub 私有仓库（云端备份与跨设备同步）</h3>
+        <h3>🔒 关联远程私有仓库（支持国内 Gitee 码云 & GitHub 云备份同步）</h3>
         <p class="settings-hint">
-          将本地 <code>vault/</code> 目录作为独立的 Git 仓库关联到你的 <strong>GitHub 私有仓库 (Private Repo)</strong>，与软件源码完全隔离，保护你的私人笔记与文档安全。
+          将本地 <code>vault/</code> 目录作为独立的 Git 仓库关联到你的 <strong>Gitee（码云 <code>https://gitee.com</code>，国内极速直连免代理）</strong> 或 <strong>GitHub 私有仓库</strong>，与软件源码完全隔离，保护你的私人笔记与文档安全。
         </p>
 
         ${(() => {
           const gitSt = state.vaultGitStatus || {};
           const currentRemote = gitSt.remoteUrl || cfg.vaultGit?.remoteUrl || '';
+          const activeProvider = state.gitProviderTab || gitSt.provider || 'gitee';
+          const isGitee = activeProvider === 'gitee';
           const ghUser = gitSt.ghUser || 'TeaGo-lab';
-          const defaultPrivateUrl = `https://github.com/${ghUser}/quick-memo-vault.git`;
+          const inputUrlValue = isGitee
+            ? (currentRemote.includes('gitee.com') ? currentRemote : (cfg.vaultGit?.giteeUrl || ''))
+            : (currentRemote.includes('github.com') ? currentRemote : `https://github.com/${ghUser}/quick-memo-vault.git`);
 
           return `
+            <div class="git-provider-tabs">
+              <button type="button" class="git-provider-tab ${isGitee ? 'active' : ''}" data-git-provider="gitee">
+                🇨🇳 Gitee 码云（国内极速直连推荐 · gitee.com）
+              </button>
+              <button type="button" class="git-provider-tab ${!isGitee ? 'active' : ''}" data-git-provider="github">
+                🐙 GitHub（全球代码托管 · github.com）
+              </button>
+            </div>
+
             <div class="git-status-banner ${currentRemote ? 'linked' : 'unlinked'}">
               <div class="git-status-main">
-                <span class="git-badge">${currentRemote ? '🟢 已关联私有库' : '⚪ 尚未绑定远程仓库'}</span>
-                <code class="git-remote-code">${escapeHtml(currentRemote || '本地 Vault 尚未绑定 GitHub 远程地址')}</code>
+                <span class="git-badge">
+                  ${currentRemote
+                    ? (currentRemote.includes('gitee.com') ? '🟢 已关联 Gitee 码云私有库' : '🟢 已关联 GitHub 私有库')
+                    : '⚪ 尚未绑定远程私有仓库'}
+                </span>
+                <code class="git-remote-code">${escapeHtml(currentRemote || '本地 Vault 尚未绑定远程私有仓库地址')}</code>
               </div>
               ${gitSt.lastCommit ? `
                 <div class="git-status-sub">
@@ -1054,13 +1108,13 @@ function renderSettingsView() {
 
             <div class="form-grid" style="margin-top: 12px;">
               <label class="form-field full">
-                <span>GitHub 私有仓库地址 (HTTPS 或 SSH)</span>
+                <span>${isGitee ? '🇨🇳 Gitee 码云私有仓库地址 (https://gitee.com/...)' : '🐙 GitHub 私有仓库地址 (HTTPS 或 SSH)'}</span>
                 <div class="vault-path-row">
                   <input
                     type="text"
                     id="cfg-vault-git-url"
-                    value="${escapeHtml(currentRemote || defaultPrivateUrl)}"
-                    placeholder="例如：https://github.com/TeaGo-lab/quick-memo-vault.git"
+                    value="${escapeHtml(inputUrlValue)}"
+                    placeholder="${isGitee ? '例如：https://gitee.com/你的用户名/quick-memo-vault.git' : '例如：https://github.com/TeaGo-lab/quick-memo-vault.git'}"
                   />
                   <button class="tool-btn" id="btn-link-existing-repo" ${state.gitSyncing ? 'disabled' : ''}>
                     🔗 绑定此地址并推送
@@ -1068,15 +1122,37 @@ function renderSettingsView() {
                 </div>
               </label>
 
+              ${isGitee ? `
+                <label class="form-field full">
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+                    <span>🔑 Gitee 私人令牌 (Access Token，可选：填写后支持免密推送与一键自动创建 Gitee 私有库)</span>
+                    <div style="display:flex;gap:6px;">
+                      <button type="button" class="mini-btn" data-open-ext-url="https://gitee.com/profile/personal_access_tokens">🌐 去 Gitee 生成私人令牌</button>
+                      <button type="button" class="mini-btn" data-open-ext-url="https://gitee.com/projects/new">➕ 去 Gitee 手动新建仓库</button>
+                    </div>
+                  </div>
+                  <input
+                    type="password"
+                    id="cfg-vault-gitee-token"
+                    value="${escapeHtml(cfg.vaultGit?.giteeToken || '')}"
+                    placeholder="粘贴你的 Gitee 私人令牌 (Personal Access Token)..."
+                  />
+                </label>
+              ` : ''}
+
               <label class="form-field-inline full">
                 <input type="checkbox" id="cfg-vault-git-autosync" ${(cfg.vaultGit?.autoSync || gitSt.autoSyncEnabled) ? 'checked' : ''} />
-                <span>每次新增或修改闪念后，自动在后台静默提交并推送到 GitHub 私有库</span>
+                <span>每次新增或修改闪念后，自动在后台静默提交并推送到 ${isGitee ? 'Gitee 码云' : 'GitHub'} 私有库</span>
               </label>
             </div>
 
             <div class="git-actions-bar">
-              <button class="primary-submit-btn" id="btn-auto-create-private-repo" ${state.gitSyncing ? 'disabled' : ''} title="使用本机已登录的 GitHub 账号 (${escapeHtml(ghUser)}) 自动新建名为 quick-memo-vault 的私有仓库并推送">
-                🚀 ${state.gitSyncing ? '正在同步 GitHub...' : `一键在 ${escapeHtml(ghUser)} 下自动创建私有库并同步`}
+              <button class="primary-submit-btn" id="btn-auto-create-private-repo" ${state.gitSyncing ? 'disabled' : ''}>
+                🚀 ${state.gitSyncing
+                  ? `正在同步到 ${isGitee ? 'Gitee 码云' : 'GitHub'}...`
+                  : isGitee
+                    ? '一键在 Gitee 码云自动创建私有库 (quick-memo-vault) 并同步'
+                    : `一键在 GitHub (${escapeHtml(ghUser)}) 自动创建私有库并同步`}
               </button>
               ${currentRemote ? `
                 <button class="tool-btn" id="btn-vault-git-push" ${state.gitSyncing ? 'disabled' : ''}>☁️ 立即推送备份 (Push)</button>
@@ -1627,6 +1703,29 @@ export function render() {
     return;
   }
 
+  // 记录重渲染前的滚动条位置（同一 Tab 内点击按钮重渲染时不跳回顶部）
+  const sameTab = state._lastRenderedTab === state.activeTab;
+  const scrollSelectors = [
+    '.settings-shell',
+    '.capture-shell',
+    '.vault-sidebar',
+    '.vault-list-scroll',
+    '.vault-detail-pane',
+    '.detail-body',
+    '#chat-messages-scroll'
+  ];
+  const savedScrollMap = new Map();
+  const savedWindowY = window.scrollY || document.documentElement.scrollTop || 0;
+  if (sameTab) {
+    for (const sel of scrollSelectors) {
+      const el = app.querySelector(sel);
+      if (el && el.scrollTop > 0) {
+        savedScrollMap.set(sel, el.scrollTop);
+      }
+    }
+  }
+  state._lastRenderedTab = state.activeTab;
+
   let bodyHtml = '';
   if (state.activeTab === 'capture') {
     bodyHtml = renderCaptureView();
@@ -1670,6 +1769,16 @@ export function render() {
       ` : ''}
     </div>
   `;
+
+  if (sameTab) {
+    for (const [sel, top] of savedScrollMap.entries()) {
+      const el = app.querySelector(sel);
+      if (el) el.scrollTop = top;
+    }
+    if (savedWindowY > 0) {
+      window.scrollTo(0, savedWindowY);
+    }
+  }
 
   bindEvents();
 }
@@ -2161,11 +2270,14 @@ function bindEvents() {
   if (btnReclassify) {
     btnReclassify.addEventListener('click', async () => {
       const id = btnReclassify.getAttribute('data-id');
-      btnReclassify.textContent = '⏳ AI 分析中...';
+      const targetMemo = state.memos.find((m) => m.id === id);
+      const hasUrl = /https?:\/\//i.test(targetMemo?.content || '');
+      btnReclassify.textContent = hasUrl ? '🌐 正在打开网页提取正文并 AI 归类...' : '⏳ AI 分析中...';
       btnReclassify.disabled = true;
       try {
         const res = await Bridge.reclassifyMemo(id);
         state.memos = state.memos.map((m) => (m.id === id ? res.memo : m));
+        refreshIndexStats();
       } catch (err) {
         alert(`重新归类失败：${err.message}`);
       } finally {
@@ -2200,13 +2312,29 @@ function bindEvents() {
     });
   }
 
+  document.querySelectorAll('[data-git-provider]').forEach((tab) => {
+    tab.addEventListener('click', () => {
+      state.gitProviderTab = tab.getAttribute('data-git-provider') || 'gitee';
+      state.gitFeedback = null;
+      render();
+    });
+  });
+
+  document.querySelectorAll('[data-open-ext-url]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const url = btn.getAttribute('data-open-ext-url');
+      if (url) window.open(url, '_blank');
+    });
+  });
+
   const btnLinkExistingRepo = document.getElementById('btn-link-existing-repo');
   if (btnLinkExistingRepo) {
     btnLinkExistingRepo.addEventListener('click', async () => {
       const repoUrl = document.getElementById('cfg-vault-git-url')?.value.trim() || '';
+      const giteeToken = document.getElementById('cfg-vault-gitee-token')?.value.trim() || '';
       const autoSync = document.getElementById('cfg-vault-git-autosync')?.checked ?? false;
-      if (!repoUrl) {
-        alert('请先输入 GitHub 私有仓库地址');
+      if (!repoUrl || repoUrl.includes('你的用户名')) {
+        alert('请先输入你真实的 Gitee 或 GitHub 私有仓库地址');
         return;
       }
       state.gitSyncing = true;
@@ -2214,11 +2342,14 @@ function bindEvents() {
       render();
       try {
         const res = await Bridge.linkVaultGit({
+          provider: state.gitProviderTab,
           repoUrl,
+          giteeToken,
           autoCreatePrivate: false,
           autoSync
         });
         state.vaultGitStatus = res.status;
+        state.config = await Bridge.getConfig();
         state.gitFeedback = {
           ok: true,
           text: `✅ 已成功绑定远程私有仓库 (${res.remoteUrl}) 并完成首次云端推送！`
@@ -2239,11 +2370,14 @@ function bindEvents() {
   if (btnAutoCreateRepo) {
     btnAutoCreateRepo.addEventListener('click', async () => {
       const autoSync = document.getElementById('cfg-vault-git-autosync')?.checked ?? true;
+      const giteeToken = document.getElementById('cfg-vault-gitee-token')?.value.trim() || '';
       state.gitSyncing = true;
       state.gitFeedback = null;
       render();
       try {
         const res = await Bridge.linkVaultGit({
+          provider: state.gitProviderTab,
+          giteeToken,
           autoCreatePrivate: true,
           repoName: 'quick-memo-vault',
           autoSync
@@ -2252,7 +2386,7 @@ function bindEvents() {
         state.config = await Bridge.getConfig();
         state.gitFeedback = {
           ok: true,
-          text: `🎉 已自动在你的 GitHub 账号下创建私有仓库 ${res.remoteUrl} 并推送全部本地 Markdown 笔记！`
+          text: `🎉 已自动在你的 ${state.gitProviderTab === 'gitee' ? 'Gitee 码云' : 'GitHub'} 账号下创建私有仓库 ${res.remoteUrl} 并推送全部本地 Markdown 笔记！`
         };
       } catch (err) {
         state.gitFeedback = {
@@ -2380,7 +2514,9 @@ function bindEvents() {
         vaultPath,
         vaultGit: {
           ...(state.config.vaultGit || {}),
+          provider: state.gitProviderTab,
           remoteUrl: document.getElementById('cfg-vault-git-url')?.value.trim() || state.config.vaultGit?.remoteUrl || '',
+          giteeToken: document.getElementById('cfg-vault-gitee-token')?.value.trim() ?? (state.config.vaultGit?.giteeToken || ''),
           autoSync: document.getElementById('cfg-vault-git-autosync')?.checked ?? false
         },
         llm: {

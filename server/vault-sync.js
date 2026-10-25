@@ -115,8 +115,28 @@ function runGitInVault(vaultPath, args = []) {
   }).trim();
 }
 
+function maskRemoteUrl(rawUrl = '') {
+  return String(rawUrl || '').replace(/https:\/\/([^/@:]+):([^/@]+)@/i, 'https://');
+}
+
+function detectGitProvider(url = '') {
+  const u = String(url || '').toLowerCase();
+  if (u.includes('gitee.com')) return 'gitee';
+  if (u.includes('github.com')) return 'github';
+  return u ? 'custom' : '';
+}
+
+function injectGiteeTokenToUrl(repoUrl = '', token = '') {
+  const cleanUrl = maskRemoteUrl(repoUrl).trim();
+  const cleanToken = String(token || '').trim();
+  if (!cleanToken || !/^https:\/\/gitee\.com\//i.test(cleanUrl)) {
+    return cleanUrl;
+  }
+  return cleanUrl.replace(/^https:\/\/gitee\.com\//i, `https://oauth2:${encodeURIComponent(cleanToken)}@gitee.com/`);
+}
+
 /**
- * 获取本地 Vault 目录关联的独立 GitHub 私有仓库状态
+ * 获取本地 Vault 目录关联的独立 Git 私有仓库状态（支持 Gitee 码云 & GitHub）
  */
 export function getVaultGitStatus() {
   const config = getConfig();
@@ -124,14 +144,14 @@ export function getVaultGitStatus() {
   const gitDir = path.join(vaultPath, '.git');
   const isGitInitialized = fs.existsSync(gitDir);
 
-  let remoteUrl = '';
+  let rawRemoteUrl = '';
   let pendingChanges = 0;
   let lastCommit = '';
   let branch = 'main';
 
   if (isGitInitialized) {
     try {
-      remoteUrl = runGitInVault(vaultPath, ['remote', 'get-url', 'origin']);
+      rawRemoteUrl = runGitInVault(vaultPath, ['remote', 'get-url', 'origin']);
     } catch {}
     try {
       branch = runGitInVault(vaultPath, ['branch', '--show-current']) || 'main';
@@ -144,6 +164,9 @@ export function getVaultGitStatus() {
       lastCommit = runGitInVault(vaultPath, ['log', '-1', '--format=%cd · %s', '--date=format:%Y-%m-%d %H:%M']);
     } catch {}
   }
+
+  const remoteUrl = maskRemoteUrl(rawRemoteUrl);
+  const provider = detectGitProvider(remoteUrl) || config.vaultGit?.provider || 'gitee';
 
   let ghUser = '';
   try {
@@ -158,19 +181,23 @@ export function getVaultGitStatus() {
     vaultPath,
     isGitInitialized,
     remoteUrl,
+    provider,
     branch,
     pendingChanges,
     lastCommit,
     ghUser,
+    hasGiteeToken: Boolean(config.vaultGit?.giteeToken),
     autoSyncEnabled: Boolean(config.vaultGit?.autoSync)
   };
 }
 
 /**
- * 初始化 Vault 独立 Git 仓库，并支持一键创建或关联 GitHub 私有仓库
+ * 初始化 Vault 独立 Git 仓库，并支持一键创建或关联 Gitee (国内码云) / GitHub 私有仓库
  */
-export function linkVaultToGitHub({
+export async function linkVaultToGitHub({
+  provider = '',
   repoUrl = '',
+  giteeToken = '',
   autoCreatePrivate = false,
   repoName = 'quick-memo-vault',
   autoSync = false
@@ -195,72 +222,125 @@ export function linkVaultToGitHub({
     fs.writeFileSync(vaultGitignore, '.DS_Store\nThumbs.db\n', 'utf-8');
   }
 
+  const resolvedToken = String(giteeToken || config.vaultGit?.giteeToken || '').trim();
   let targetRemoteUrl = String(repoUrl || '').trim();
+  const chosenProvider = provider || detectGitProvider(targetRemoteUrl) || 'gitee';
 
   if (autoCreatePrivate) {
     const cleanRepoName = String(repoName || 'quick-memo-vault').trim().replace(/[^a-zA-Z0-9._-]/g, '-');
-    // 获取当前登录的 GitHub 用户名
-    const ghUser = execFileSync('gh', ['api', 'user', '-q', '.login'], {
-      encoding: 'utf-8',
-      timeout: 8000,
-      windowsHide: true
-    }).trim();
 
-    if (!ghUser) {
-      throw new Error('未检测到本机 gh 登录状态，请手动填入私有仓库地址');
-    }
+    if (chosenProvider === 'gitee') {
+      if (!resolvedToken) {
+        throw new Error('一键在 Gitee 自动创建私有仓库需要先填写「Gitee 私人令牌 (Access Token)」，或者你也可以直接在 Gitee 网页端新建私有库后粘贴地址绑定');
+      }
 
-    const fullSlug = `${ghUser}/${cleanRepoName}`;
-    // 检查该仓库是否已存在
-    let exists = false;
-    try {
-      execFileSync('gh', ['repo', 'view', fullSlug, '--json', 'name'], {
+      // 1. 获取 Gitee 当前登录用户名
+      const userRes = await fetch(`https://gitee.com/api/v5/user?access_token=${encodeURIComponent(resolvedToken)}`, {
+        signal: AbortSignal.timeout(10000)
+      });
+      if (!userRes.ok) {
+        throw new Error(`Gitee 私人令牌校验失败 (HTTP ${userRes.status})，请检查 Token 是否正确并勾选了 projects 权限`);
+      }
+      const userData = await userRes.json();
+      const giteeLogin = userData.login;
+      if (!giteeLogin) {
+        throw new Error('未能获取到 Gitee 用户名');
+      }
+
+      // 2. 检查仓库是否已存在，若不存在则自动创建私有仓库
+      const checkRes = await fetch(
+        `https://gitee.com/api/v5/repos/${encodeURIComponent(giteeLogin)}/${encodeURIComponent(cleanRepoName)}?access_token=${encodeURIComponent(resolvedToken)}`,
+        { signal: AbortSignal.timeout(10000) }
+      );
+
+      if (!checkRes.ok) {
+        const createRes = await fetch('https://gitee.com/api/v5/user/repos', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json;charset=UTF-8' },
+          body: JSON.stringify({
+            access_token: resolvedToken,
+            name: cleanRepoName,
+            description: 'QuickMemo 私人闪念与本地 Markdown 知识库云备份（私有仓库）',
+            private: true,
+            auto_init: false
+          }),
+          signal: AbortSignal.timeout(15000)
+        });
+        if (!createRes.ok) {
+          const errText = await createRes.text();
+          throw new Error(`在 Gitee 创建私有仓库失败：${errText}`);
+        }
+      }
+
+      targetRemoteUrl = `https://gitee.com/${giteeLogin}/${cleanRepoName}.git`;
+    } else {
+      // GitHub 自动创建私有仓库
+      const ghUser = execFileSync('gh', ['api', 'user', '-q', '.login'], {
         encoding: 'utf-8',
         timeout: 8000,
         windowsHide: true
-      });
-      exists = true;
-    } catch {
-      exists = false;
-    }
+      }).trim();
 
-    if (!exists) {
-      execFileSync(
-        'gh',
-        [
-          'repo',
-          'create',
-          fullSlug,
-          '--private',
-          '--description',
-          'QuickMemo 私人闪念与本地 Markdown 知识库云备份（私有仓库）'
-        ],
-        {
+      if (!ghUser) {
+        throw new Error('未检测到本机 gh 登录状态，请手动填入私有仓库地址或切换为国内 Gitee 码云');
+      }
+
+      const fullSlug = `${ghUser}/${cleanRepoName}`;
+      let exists = false;
+      try {
+        execFileSync('gh', ['repo', 'view', fullSlug, '--json', 'name'], {
           encoding: 'utf-8',
-          timeout: 15000,
+          timeout: 8000,
           windowsHide: true
-        }
-      );
-    }
+        });
+        exists = true;
+      } catch {
+        exists = false;
+      }
 
-    targetRemoteUrl = `https://github.com/${fullSlug}.git`;
+      if (!exists) {
+        execFileSync(
+          'gh',
+          [
+            'repo',
+            'create',
+            fullSlug,
+            '--private',
+            '--description',
+            'QuickMemo 私人闪念与本地 Markdown 知识库云备份（私有仓库）'
+          ],
+          {
+            encoding: 'utf-8',
+            timeout: 15000,
+            windowsHide: true
+          }
+        );
+      }
+
+      targetRemoteUrl = `https://github.com/${fullSlug}.git`;
+    }
   }
 
   if (!targetRemoteUrl) {
-    throw new Error('请填写 GitHub 私有仓库地址，或点击一键创建私有仓库');
+    throw new Error('请填写 Gitee 或 GitHub 私有仓库地址，或点击一键创建私有仓库');
   }
+
+  const displayRemoteUrl = maskRemoteUrl(targetRemoteUrl);
+  const gitAuthRemoteUrl = injectGiteeTokenToUrl(displayRemoteUrl, resolvedToken);
 
   // 设置或更新 origin 远程地址
   try {
     runGitInVault(vaultPath, ['remote', 'remove', 'origin']);
   } catch {}
-  runGitInVault(vaultPath, ['remote', 'add', 'origin', targetRemoteUrl]);
+  runGitInVault(vaultPath, ['remote', 'add', 'origin', gitAuthRemoteUrl]);
 
-  // 保存配置
+  // 保存配置（配置中保存脱敏后的仓库地址）
   saveConfig({
     ...config,
     vaultGit: {
-      remoteUrl: targetRemoteUrl,
+      provider: detectGitProvider(displayRemoteUrl) || chosenProvider,
+      remoteUrl: displayRemoteUrl,
+      giteeToken: resolvedToken,
       autoSync: Boolean(autoSync)
     }
   });
@@ -269,7 +349,8 @@ export function linkVaultToGitHub({
   const syncRes = syncVaultGit({ action: 'push' });
   return {
     ok: true,
-    remoteUrl: targetRemoteUrl,
+    remoteUrl: displayRemoteUrl,
+    provider: detectGitProvider(displayRemoteUrl) || chosenProvider,
     syncResult: syncRes,
     status: getVaultGitStatus()
   };

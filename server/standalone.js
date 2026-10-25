@@ -195,22 +195,15 @@ export function startStandaloneServer(port = 1420, openWindow = false) {
         }
         if (url.pathname === '/api/memos/quick-save' && req.method === 'POST') {
           const body = await readJsonBody(req);
-          const config = getConfig();
           const rawAttachments = body.rawAttachments || [];
 
+          const llmResult = await classifyWithLLM({
+            content: body.content,
+            attachments: rawAttachments
+          });
           const classification = body.manualCategory
-            ? {
-                ...heuristicClassify({
-                  content: body.content,
-                  attachments: rawAttachments,
-                  categories: config.categories
-                }),
-                category: body.manualCategory
-              }
-            : await classifyWithLLM({
-                content: body.content,
-                attachments: rawAttachments
-              });
+            ? { ...llmResult, category: body.manualCategory }
+            : llmResult;
 
           // 自动用 AI 或文档内容提取器生成的清晰文件名重命名上传的附件
           const renamedRawAttachments = rawAttachments.map((att, idx) => ({
@@ -227,6 +220,7 @@ export function startStandaloneServer(port = 1420, openWindow = false) {
             title: body.manualTitle || classification.title,
             summary: classification.summary,
             tags: classification.tags,
+            webPages: classification.webPages || [],
             aiClassified: classification.aiClassified
           });
           try {
@@ -266,6 +260,7 @@ export function startStandaloneServer(port = 1420, openWindow = false) {
             content: nextContent,
             summary: classification.summary,
             tags: classification.tags,
+            webPages: classification.webPages || target.webPages || [],
             aiClassified: classification.aiClassified
           });
           try {
@@ -309,7 +304,7 @@ export function startStandaloneServer(port = 1420, openWindow = false) {
         }
         if (url.pathname === '/api/vault/git-link' && req.method === 'POST') {
           const body = await readJsonBody(req);
-          return sendJson(res, 200, linkVaultToGitHub(body));
+          return sendJson(res, 200, await linkVaultToGitHub(body));
         }
         if (url.pathname === '/api/vault/git-sync' && req.method === 'POST') {
           const body = await readJsonBody(req);

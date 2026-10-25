@@ -8,6 +8,7 @@ src-tauri/gen/
 .quick-memo-config.json
 .window-cmd.json
 .webview-profile/
+.crawler-profile/
 
 # User local Markdown vault data
 vault/*

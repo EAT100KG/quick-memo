@@ -171,6 +171,21 @@ export function buildMarkdownContent(memo) {
     bodyParts.push('## 附件与媒体', '', ...attachmentSection, '');
   }
 
+  if (Array.isArray(memo.webPages) && memo.webPages.length > 0) {
+    bodyParts.push('## 🌐 网页链接抓取内容', '');
+    for (const page of memo.webPages) {
+      const pageTitle = (page.title || page.url || '网页正文').trim();
+      bodyParts.push(`### [${pageTitle}](${page.url || ''})`);
+      if (page.fetchedAt) {
+        bodyParts.push(`> 抓取时间：${page.fetchedAt}`);
+      }
+      bodyParts.push('');
+      if (page.extractedText) {
+        bodyParts.push(page.extractedText.trim(), '');
+      }
+    }
+  }
+
   return bodyParts.join('\n');
 }
 
@@ -261,6 +276,7 @@ export function saveMemo(payload) {
     createdAt: payload.createdAt || fullStr,
     aiClassified: Boolean(payload.aiClassified),
     attachments: savedAttachments,
+    webPages: Array.isArray(payload.webPages) ? payload.webPages : [],
     mdRelPath: `${category}/${mdFileName}`,
     mdAbsPath
   };
@@ -294,6 +310,7 @@ export function updateMemo(id, patch) {
   const newSummary = patch.summary !== undefined ? patch.summary : oldMemo.summary;
   const newTags = patch.tags !== undefined ? patch.tags : oldMemo.tags;
   const newAiClassified = patch.aiClassified !== undefined ? patch.aiClassified : oldMemo.aiClassified;
+  const newWebPages = patch.webPages !== undefined ? patch.webPages : (oldMemo.webPages || []);
 
   const newCategoryDir = path.join(vaultPath, newCategory);
   if (!fs.existsSync(newCategoryDir)) {
@@ -349,6 +366,7 @@ export function updateMemo(id, patch) {
     tags: newTags,
     aiClassified: newAiClassified,
     attachments: updatedAttachments,
+    webPages: newWebPages,
     mdRelPath: `${newCategory}/${newMdFileName}`,
     mdAbsPath: newMdAbsPath
   };

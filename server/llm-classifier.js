@@ -2,6 +2,7 @@ import path from 'node:path';
 import OpenAI from 'openai';
 import { getConfig, sanitizeFileName, detectSecretKeyInfo } from './vault-manager.js';
 import { extractFileContent, isMeaninglessFileName } from './file-extractor.js';
+import { extractWebPagesFromContent } from './url-extractor.js';
 
 /**
  * 预处理附件：提取 PDF/Word/文本文件的内部正文和标题
@@ -223,11 +224,15 @@ ${extractedText ? extractedText.slice(0, 1500) : '（无文本）'}`;
 /**
  * 本地启发式规则分类与文件自动重命名（当未配置 API Key 或接口异常时兜底）
  */
-export function heuristicClassify({ content = '', attachments = [], categories = [] }) {
+export function heuristicClassify({ content = '', attachments = [], webPages = [], categories = [] }) {
   const enriched = enrichAttachmentsWithContent(attachments);
   const userText = String(content || '').trim();
   const extractedTexts = enriched.map((a) => a.extractedText || '').filter(Boolean).join('\n');
-  const combinedText = [userText, extractedTexts].filter(Boolean).join('\n');
+  const webTexts = (webPages || [])
+    .map((p) => [p.title, p.description, p.extractedText].filter(Boolean).join('\n'))
+    .filter(Boolean)
+    .join('\n\n');
+  const combinedText = [userText, extractedTexts, webTexts].filter(Boolean).join('\n');
 
   const hasImage = enriched.some((a) => (a.mimeType || '').startsWith('image/'));
   const hasDoc = enriched.some((a) => !(a.mimeType || '').startsWith('image/'));
@@ -308,7 +313,10 @@ export function heuristicClassify({ content = '', attachments = [], categories =
 
   let title = '';
   const firstDetectedDocTitle = enriched.map((a) => a.detectedTitle).find(Boolean);
-  if (userText) {
+  const firstWebPageTitle = (webPages || []).map((p) => p.title).find(Boolean);
+  if (firstWebPageTitle) {
+    title = firstWebPageTitle.slice(0, 36);
+  } else if (userText) {
     const firstLine = userText
       .split(/\r?\n/)
       .map((l) => l.replace(/^[#>*-\s]+/, '').trim())
@@ -335,7 +343,10 @@ export function heuristicClassify({ content = '', attachments = [], categories =
   }
 
   let summary = '';
-  if (extractedTexts) {
+  if (webTexts) {
+    const cleanWeb = webTexts.replace(/\s+/g, ' ').trim();
+    summary = cleanWeb.slice(0, 120) + (cleanWeb.length > 120 ? '...' : '');
+  } else if (extractedTexts) {
     const cleanDoc = extractedTexts.replace(/\s+/g, ' ').trim();
     summary = cleanDoc.slice(0, 110) + (cleanDoc.length > 110 ? '...' : '');
   } else if (userText.length > 35) {
@@ -354,7 +365,8 @@ export function heuristicClassify({ content = '', attachments = [], categories =
     summary,
     tags: Array.from(tags).slice(0, 5),
     renamedFiles,
-    extractedPreview: extractedTexts.slice(0, 600),
+    webPages: webPages || [],
+    extractedPreview: (extractedTexts || webTexts).slice(0, 600),
     aiClassified: false
   };
 }
@@ -388,13 +400,22 @@ export async function testLlmConnection(customLlmCfg = null) {
 /**
  * 使用官方 OpenAI SDK 进行语义分类、标题生成、摘要提炼、打标与附件自动重命名
  */
-export async function classifyWithLLM({ content = '', attachments = [] }) {
+export async function classifyWithLLM({ content = '', attachments = [], webPages = null, interactiveOnLogin = true }) {
   const config = getConfig();
   const categories = config.categories || [];
   const llmCfg = config.llm || {};
 
   const enriched = enrichAttachmentsWithContent(attachments);
-  const fallbackResult = heuristicClassify({ content, attachments: enriched, categories });
+  const resolvedWebPages = Array.isArray(webPages)
+    ? webPages
+    : await extractWebPagesFromContent(content, { interactiveOnLogin });
+
+  const fallbackResult = heuristicClassify({
+    content,
+    attachments: enriched,
+    webPages: resolvedWebPages,
+    categories
+  });
 
   if (!llmCfg.enabled || (!llmCfg.apiKey && llmCfg.providerPreset !== 'ollama') || !llmCfg.baseUrl) {
     return fallbackResult;
@@ -413,11 +434,25 @@ export async function classifyWithLLM({ content = '', attachments = [] }) {
       }).join('\n')
     : '无附件';
 
+  const webPagesDetails = resolvedWebPages.length > 0
+    ? resolvedWebPages.map((p, idx) => {
+        return [
+          `链接${idx + 1}: URL="${p.url}"`,
+          p.title ? `  网页真实标题: "${p.title}"` : '',
+          p.description ? `  网页Meta描述: "${p.description}"` : '',
+          p.extractedText
+            ? `  自动抓取到的网页正文内容：\n  """\n  ${p.extractedText.slice(0, 3200)}\n  """`
+            : ''
+        ].filter(Boolean).join('\n');
+      }).join('\n\n')
+    : '无网页链接抓取内容';
+
   const systemPrompt = `你是一个高效的个人知识库与文件整理助手。用户随手丢进来一段文字、链接、截图或文件（如 PDF、文档）。
-请你根据【正文备注】和【提取到的文件内部文本/图像】，完成以下任务：
-1. 选出最匹配的分类目录 id（category）；
-2. 生成清晰、好搜索的中文记录标题（title，10~28字）；
-3. 提炼 30~80 字的核心内容摘要（summary）；
+请你根据【正文备注】、【自动打开链接抓取到的网页真实内容】和【提取到的文件内部文本/图像】，完成以下任务：
+1. 选出最匹配的分类目录 id（category）：
+   - 若包含网页链接且已抓取到网页真实内容，请**根据网页内实际探讨的主题内容**决定分类（例如网页讲技术/代码/开源库归入“02-技术与代码”，讲资料合集/提示词/教程文档归入“06-资料与文档”或“03-精读与链接”，工作项目归入“04-工作与待办”）；
+2. 生成清晰、好搜索的中文记录标题（title，10~28字，优先提炼网页或文档的真实核心主题）；
+3. 提炼 35~95 字的核心内容摘要（summary，总结网页或文档里具体讲了什么内容、包含哪些具体资源或核心结论，不要只写“记录了一个链接待查看”）；
 4. 提取 2~5 个关键词标签（tags）；
 5. **自动重命名附件（renamedFiles）**：如果包含附件，请按附件顺序为每个附件起一个清晰、具体、便于搜索的中文新文件名（保留原扩展名，如 "3D产品宣传片提示词（通用版）.pdf"）。
 
@@ -435,7 +470,10 @@ ${llmCfg.customSystemPrompt ? `用户补充偏好：\n${llmCfg.customSystemPromp
 }`;
 
   const userTextPrompt = `【用户输入的正文/备注】：
-${content || '（用户未手写备注，请依据下方附件内容进行分析与重命名）'}
+${content || '（用户未手写备注，请依据下方网页或附件内容进行分析）'}
+
+【自动打开链接抓取到的网页真实内容】：
+${webPagesDetails}
 
 【上传的附件及内部提取内容】：
 ${attachmentDetails}`;
@@ -521,6 +559,7 @@ ${attachmentDetails}`;
         ? parsed.tags.map((t) => String(t).replace(/^#/, '').trim()).filter(Boolean).slice(0, 6)
         : fallbackResult.tags,
       renamedFiles: aiRenamedFiles,
+      webPages: resolvedWebPages,
       extractedPreview: fallbackResult.extractedPreview,
       aiClassified: true
     };
