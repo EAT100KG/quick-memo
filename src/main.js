@@ -1,4 +1,6 @@
 import { Bridge } from './bridge.js';
+import alipayQrUrl from '../images/2dd30f48913ba3d796b3578f4484b6c8.jpg';
+import wechatQrUrl from '../images/379e7960a912f6a825bec9003ffcdf9f.png';
 
 const TYPE_META = {
   all: { label: '全部类型', icon: '✦' },
@@ -60,7 +62,8 @@ const state = {
   updateCheck: null,
   checkingUpdate: false,
   performingUpdate: false,
-  updateFeedback: null
+  updateFeedback: null,
+  qrPreviewModal: null // { title, imgUrl }
 };
 
 function isPdfAttachment(att = {}) {
@@ -1516,6 +1519,80 @@ function renderAboutView() {
         ` : ''}
       </div>
 
+      <div class="settings-card about-promo-card">
+        <div class="about-promo-grid">
+          <div class="about-promo-main">
+            <div class="about-promo-badge">✨ 开发者出品 · 精选官方站点</div>
+            <h3 class="about-promo-title">
+              🏮 命书 · 东方传统子平八字 × 紫微斗数双盘合参
+            </h3>
+            <p class="about-promo-desc">
+              探索我们的主站 <strong><a href="https://mingshu.closty.art" target="_blank" rel="noopener" class="promo-site-link">https://mingshu.closty.art</a></strong> —— 融合子平八字与紫微斗数双盘互证，遵循古籍体例输出十四章文白融合详批命书、时辰定盘校准与即时易占体验。
+            </p>
+            <div class="about-promo-actions">
+              <button class="primary-submit-btn" id="btn-open-mingshu-site" data-url="https://mingshu.closty.art">
+                🌐 立即访问 mingshu.closty.art
+              </button>
+              <button class="tool-btn" data-copy-code="https://mingshu.closty.art">
+                📋 复制官网网址
+              </button>
+            </div>
+          </div>
+
+          <div class="about-contact-box">
+            <div class="about-contact-label">📬 建议与反馈信箱</div>
+            <div class="about-contact-email" id="contact-email-text">teagoxu@proton.me</div>
+            <p class="about-contact-hint">
+              如果你在使用 QuickMemo 时有任何改进建议、新功能想法、Bug 反馈或合作意向，欢迎随时发邮件告诉我们！
+            </p>
+            <div class="about-contact-actions">
+              <button class="mini-btn primary" data-copy-code="teagoxu@proton.me">
+                📋 复制邮箱地址
+              </button>
+              <a class="mini-btn" href="mailto:teagoxu@proton.me?subject=QuickMemo%20%E4%BD%BF%E7%94%A8%E5%BB%BA%E8%AE%AE%E4%B8%8E%E5%8F%8D%E9%A6%88" style="text-decoration: none;">
+                ✉️ 写邮件提建议
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-card about-donate-card">
+        <div class="about-donate-header">
+          <div>
+            <h3>☕ 赞赏与支持（请作者喝杯茶）</h3>
+            <p class="settings-desc" style="margin-bottom: 0;">
+              QuickMemo 是一款免费开源、无广告、数据 100% 本地化的桌面效率工具。如果它帮你告别了杂乱的“文件传输助手”、为你节省了整理闪念与文档的时间，欢迎扫码赞赏支持我们持续迭代更新！❤️（点击二维码可放大扫码）
+            </p>
+          </div>
+          <span class="donate-heart-pill">🙏 感谢每一份鼓励</span>
+        </div>
+
+        <div class="donate-qr-grid">
+          <div class="donate-qr-item wechat" data-zoom-qr="${escapeHtml(wechatQrUrl)}" data-zoom-title="💚 微信支付赞赏 · 喝茶去(*旭)">
+            <div class="donate-qr-header">
+              <span class="donate-channel-dot wechat"></span>
+              <span>推荐使用微信支付赞赏</span>
+            </div>
+            <div class="donate-qr-img-wrap">
+              <img src="${escapeHtml(wechatQrUrl)}" alt="微信支付赞赏码" class="donate-qr-img" />
+            </div>
+            <div class="donate-qr-footer">喝茶去(*旭) · 点击图片放大</div>
+          </div>
+
+          <div class="donate-qr-item alipay" data-zoom-qr="${escapeHtml(alipayQrUrl)}" data-zoom-title="💙 支付宝赞赏 · 徐旭旭(*旭)">
+            <div class="donate-qr-header">
+              <span class="donate-channel-dot alipay"></span>
+              <span>推荐使用支付宝赞赏</span>
+            </div>
+            <div class="donate-qr-img-wrap">
+              <img src="${escapeHtml(alipayQrUrl)}" alt="支付宝赞赏码" class="donate-qr-img" />
+            </div>
+            <div class="donate-qr-footer">徐旭旭(*旭) · 点击图片放大</div>
+          </div>
+        </div>
+      </div>
+
       <div class="settings-card">
         <h3>⌨️ 效率快捷键与核心特性一览</h3>
         <div class="about-feature-grid">
@@ -1575,6 +1652,19 @@ export function render() {
               <button class="ghost-btn" id="btn-close-pdf-modal">✕ 关闭预览 (Esc)</button>
             </div>
             <iframe src="${escapeHtml(state.pdfModal.url)}" class="pdf-modal-iframe" title="PDF Preview"></iframe>
+          </div>
+        </div>
+      ` : ''}
+      ${state.qrPreviewModal ? `
+        <div class="pdf-modal-backdrop" id="qr-modal-backdrop">
+          <div class="qr-zoom-modal-card">
+            <div class="pdf-modal-header">
+              <div class="pdf-modal-title">${escapeHtml(state.qrPreviewModal.title || '扫码赞赏支持')}</div>
+              <button class="ghost-btn" id="btn-close-qr-modal">✕ 关闭 (Esc)</button>
+            </div>
+            <div class="qr-zoom-body">
+              <img src="${escapeHtml(state.qrPreviewModal.imgUrl)}" alt="赞赏二维码" class="qr-zoom-img" />
+            </div>
           </div>
         </div>
       ` : ''}
@@ -2334,6 +2424,34 @@ function bindEvents() {
     Bridge.openInExplorer(state.config?.vaultPath ? state.config.vaultPath.replace(/[\\/]vault$/i, '') : '');
   });
 
+  document.getElementById('btn-open-mingshu-site')?.addEventListener('click', (e) => {
+    const url = e.currentTarget.getAttribute('data-url') || 'https://mingshu.closty.art';
+    window.open(url, '_blank');
+  });
+
+  document.querySelectorAll('[data-zoom-qr]').forEach((card) => {
+    card.addEventListener('click', () => {
+      const imgUrl = card.getAttribute('data-zoom-qr');
+      const title = card.getAttribute('data-zoom-title') || '扫码赞赏支持';
+      if (imgUrl) {
+        state.qrPreviewModal = { title, imgUrl };
+        render();
+      }
+    });
+  });
+
+  document.getElementById('btn-close-qr-modal')?.addEventListener('click', () => {
+    state.qrPreviewModal = null;
+    render();
+  });
+
+  document.getElementById('qr-modal-backdrop')?.addEventListener('click', (e) => {
+    if (e.target.id === 'qr-modal-backdrop') {
+      state.qrPreviewModal = null;
+      render();
+    }
+  });
+
   // 聊天泡泡与寻物助手事件绑定
   const btnToggleChat = document.getElementById('btn-toggle-chat-bubble');
   if (btnToggleChat) {
@@ -2459,6 +2577,11 @@ window.addEventListener('keydown', (e) => {
     if (state.chatOpen) focusChatInput();
   } else if (e.key === 'Escape') {
     e.preventDefault();
+    if (state.qrPreviewModal) {
+      state.qrPreviewModal = null;
+      render();
+      return;
+    }
     if (state.pdfModal) {
       state.pdfModal = null;
       render();
