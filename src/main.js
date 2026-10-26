@@ -1,6 +1,6 @@
 import { Bridge } from './bridge.js';
-import alipayQrUrl from '../images/2dd30f48913ba3d796b3578f4484b6c8.jpg';
-import wechatQrUrl from '../images/379e7960a912f6a825bec9003ffcdf9f.png';
+const alipayQrUrl = new URL('../images/2dd30f48913ba3d796b3578f4484b6c8.jpg', import.meta.url).href;
+const wechatQrUrl = new URL('../images/379e7960a912f6a825bec9003ffcdf9f.png', import.meta.url).href;
 
 const TYPE_META = {
   all: { label: '全部类型', icon: '✦' },

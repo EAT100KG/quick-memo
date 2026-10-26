@@ -367,6 +367,11 @@ export function startStandaloneServer(port = 1420, openWindow = false) {
         '.css': 'text/css; charset=utf-8',
         '.json': 'application/json; charset=utf-8',
         '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp',
+        '.svg': 'image/svg+xml',
         '.ico': 'image/x-icon'
       }[ext] || 'application/octet-stream';
       res.setHeader('Content-Type', mime);

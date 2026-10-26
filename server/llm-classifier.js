@@ -1,5 +1,35 @@
 import path from 'node:path';
-import OpenAI from 'openai';
+let _cachedOpenAI = undefined;
+async function getOpenAIConstructor() {
+  if (_cachedOpenAI !== undefined) return _cachedOpenAI;
+  try {
+    const mod = await import('openai');
+    _cachedOpenAI = mod.default || mod.OpenAI || null;
+  } catch {
+    _cachedOpenAI = null;
+  }
+  return _cachedOpenAI;
+}
+
+async function createChatCompletionFallback(baseURL, apiKey, reqParams, timeoutMs) {
+  const res = await fetch(`${baseURL.replace(/\/+$/, '')}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey || 'ollama'}`
+    },
+    body: JSON.stringify(reqParams),
+    signal: AbortSignal.timeout(timeoutMs || 20000)
+  });
+  if (!res.ok) {
+    let errBody = '';
+    try { errBody = await res.text(); } catch {}
+    const err = new Error(`HTTP ${res.status}: ${errBody.slice(0, 200)}`);
+    err.status = res.status;
+    throw err;
+  }
+  return await res.json();
+}
 import { getConfig, sanitizeFileName, detectSecretKeyInfo } from './vault-manager.js';
 import { extractFileContent, isMeaninglessFileName } from './file-extractor.js';
 import { extractWebPagesFromContent } from './url-extractor.js';
@@ -62,12 +92,21 @@ export async function callOpenAISdkChat({ baseUrl, apiKey, model, messages, json
   let lastError = null;
   for (let i = 0; i < candidates.length; i++) {
     const candidateBaseURL = candidates[i];
-    const client = new OpenAI({
-      baseURL: candidateBaseURL,
-      apiKey: apiKey || 'ollama',
-      timeout: timeoutMs,
-      maxRetries: 1
-    });
+    const OpenAIClass = await getOpenAIConstructor();
+    const client = OpenAIClass
+      ? new OpenAIClass({
+          baseURL: candidateBaseURL,
+          apiKey: apiKey || 'ollama',
+          timeout: timeoutMs,
+          maxRetries: 1
+        })
+      : {
+          chat: {
+            completions: {
+              create: (params) => createChatCompletionFallback(candidateBaseURL, apiKey, params, timeoutMs)
+            }
+          }
+        };
 
     try {
       const reqParams = {
