@@ -5,6 +5,8 @@ using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Drawing.Text;
 using System.IO;
+using System.IO.Compression;
+using System.Reflection;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -373,6 +375,7 @@ namespace QuickMemo
             }
             catch { }
 
+            EnsureEmbeddedAppFilesExtracted();
             EnsureBackendRunning();
             SetupTrayIcon();
             SetupEdgePeekForm();
@@ -382,6 +385,52 @@ namespace QuickMemo
             _monitorTimer = new System.Windows.Forms.Timer { Interval = 90 };
             _monitorTimer.Tick += OnMonitorTick;
             _monitorTimer.Start();
+        }
+
+        /// <summary>
+        /// 单文件 EXE 自解压支持：如果用户只单独下载了 QuickMemo.exe 到任意空文件夹，
+        /// 启动时自动将内嵌在 EXE 资源中的前端 dist/ 与后端 server/ 释放到当前目录，无需额外下载解压 zip。
+        /// </summary>
+        private void EnsureEmbeddedAppFilesExtracted()
+        {
+            string standaloneJs = Path.Combine(_appRoot, "server", "standalone.js");
+            string distIndex = Path.Combine(_appRoot, "dist", "index.html");
+            bool isGitRepo = Directory.Exists(Path.Combine(_appRoot, ".git"));
+
+            // 如果是开发者的 Git 仓库目录且核心文件已存在，不覆盖本地源码
+            if (isGitRepo && File.Exists(standaloneJs) && File.Exists(distIndex))
+            {
+                return;
+            }
+
+            try
+            {
+                Assembly asm = Assembly.GetExecutingAssembly();
+                using (Stream resStream = asm.GetManifestResourceStream("QuickMemo.Payload.zip"))
+                {
+                    if (resStream == null) return;
+                    using (var archive = new ZipArchive(resStream, ZipArchiveMode.Read))
+                    {
+                        foreach (ZipArchiveEntry entry in archive.Entries)
+                        {
+                            if (string.IsNullOrEmpty(entry.Name)) continue;
+                            string relPath = entry.FullName.Replace('/', Path.DirectorySeparatorChar);
+                            string destPath = Path.Combine(_appRoot, relPath);
+                            string destDir = Path.GetDirectoryName(destPath);
+                            if (!string.IsNullOrEmpty(destDir) && !Directory.Exists(destDir))
+                            {
+                                Directory.CreateDirectory(destDir);
+                            }
+                            using (Stream entryStream = entry.Open())
+                            using (FileStream outStream = new FileStream(destPath, FileMode.Create, FileAccess.Write))
+                            {
+                                entryStream.CopyTo(outStream);
+                            }
+                        }
+                    }
+                }
+            }
+            catch { }
         }
 
         private bool IsPortOpen(int port)
