@@ -486,21 +486,72 @@ export function renameAttachment(memoId, attIndex, newNameInput) {
   });
 }
 
+export function resolveAssetPathForCurrentVault(rawPath = '', vaultPath = '', mdDir = '') {
+  if (rawPath && fs.existsSync(rawPath)) {
+    return rawPath;
+  }
+  if (mdDir && rawPath && !path.isAbsolute(rawPath)) {
+    const relCandidate = path.resolve(mdDir, rawPath);
+    if (fs.existsSync(relCandidate)) return relCandidate;
+  }
+  const m = String(rawPath || '').match(/[\\/]vault[\\/](.+)$/i);
+  if (m && vaultPath) {
+    const migrated = path.join(vaultPath, m[1]);
+    if (fs.existsSync(migrated)) return migrated;
+  }
+  return rawPath;
+}
+
 export function listMemos() {
   const config = getConfig();
   const vaultPath = config.vaultPath;
   ensureVaultStructure(vaultPath, config.categories);
   const items = readIndex(vaultPath);
-  // 过滤掉在磁盘上已被外部删除的 .md 文件，并修正路径
+  // 过滤掉在磁盘上已被外部删除的 .md 文件，并在换电脑/迁移目录后自动修正 mdAbsPath 与附件 absPath
   const validItems = [];
   let changed = false;
   for (const item of items) {
-    const expectedAbs = path.join(vaultPath, item.mdRelPath || '');
-    const actualAbs = (item.mdAbsPath && fs.existsSync(item.mdAbsPath))
-      ? item.mdAbsPath
-      : (fs.existsSync(expectedAbs) ? expectedAbs : null);
+    const expectedAbs = item.mdRelPath ? path.join(vaultPath, item.mdRelPath) : '';
+    let actualAbs = null;
+    if (expectedAbs && fs.existsSync(expectedAbs)) {
+      actualAbs = expectedAbs;
+    } else if (item.mdAbsPath && fs.existsSync(item.mdAbsPath)) {
+      actualAbs = item.mdAbsPath;
+    } else {
+      const migratedMd = resolveAssetPathForCurrentVault(item.mdAbsPath, vaultPath);
+      if (migratedMd && fs.existsSync(migratedMd)) {
+        actualAbs = migratedMd;
+      }
+    }
+
     if (actualAbs) {
-      item.mdAbsPath = actualAbs;
+      if (item.mdAbsPath !== actualAbs) {
+        item.mdAbsPath = actualAbs;
+        changed = true;
+      }
+      const mdDir = path.dirname(actualAbs);
+      if (Array.isArray(item.attachments)) {
+        for (const att of item.attachments) {
+          let resolvedAttAbs = null;
+          if (att.relPath) {
+            const byRel = path.resolve(mdDir, att.relPath);
+            if (fs.existsSync(byRel)) resolvedAttAbs = byRel;
+          }
+          if (!resolvedAttAbs && att.absPath && fs.existsSync(att.absPath)) {
+            resolvedAttAbs = att.absPath;
+          }
+          if (!resolvedAttAbs && att.absPath) {
+            const migratedAtt = resolveAssetPathForCurrentVault(att.absPath, vaultPath, mdDir);
+            if (migratedAtt && fs.existsSync(migratedAtt)) {
+              resolvedAttAbs = migratedAtt;
+            }
+          }
+          if (resolvedAttAbs && att.absPath !== resolvedAttAbs) {
+            att.absPath = resolvedAttAbs;
+            changed = true;
+          }
+        }
+      }
       validItems.push(item);
     } else {
       changed = true;

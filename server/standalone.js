@@ -13,7 +13,8 @@ import {
   deleteMemo,
   renameAttachment,
   openInExplorer,
-  precheckMemo
+  precheckMemo,
+  resolveAssetPathForCurrentVault
 } from './vault-manager.js';
 import { classifyWithLLM, heuristicClassify, testLlmConnection, smartRenameUploadedFile } from './llm-classifier.js';
 import {
@@ -139,7 +140,8 @@ export function startStandaloneServer(port = 1420, openWindow = false) {
     const url = new URL(req.url || '/', `http://localhost:${port}`);
 
     if (url.pathname === '/api/asset') {
-      const filePath = url.searchParams.get('path');
+      const rawFilePath = url.searchParams.get('path');
+      const filePath = resolveAssetPathForCurrentVault(rawFilePath, getConfig().vaultPath);
       if (!filePath || !fs.existsSync(filePath)) {
         res.statusCode = 404;
         res.end('Not found');
