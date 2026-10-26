@@ -421,7 +421,7 @@ namespace QuickMemo
             try
             {
                 _nodeServerProcess = Process.Start(psi);
-                for (int i = 0; i < 30; i++)
+                for (int i = 0; i < 65; i++)
                 {
                     if (IsPortOpen(1420)) break;
                     Thread.Sleep(80);
