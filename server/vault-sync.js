@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync, execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { getConfig, saveConfig, openInExplorer } from './vault-manager.js';
 import { rebuildDocIndex } from './doc-indexer.js';
@@ -115,6 +115,103 @@ function runGitInVault(vaultPath, args = []) {
   }).trim();
 }
 
+function ensureGitIdentity(vaultPath) {
+  try {
+    runGitInVault(vaultPath, ['config', 'core.quotepath', 'false']);
+    runGitInVault(vaultPath, ['config', 'core.longpaths', 'true']);
+  } catch {}
+  try {
+    const name = runGitInVault(vaultPath, ['config', 'user.name']);
+    const email = runGitInVault(vaultPath, ['config', 'user.email']);
+    if (name && email) return;
+  } catch {}
+  try {
+    runGitInVault(vaultPath, ['config', 'user.name', 'QuickMemo Vault']);
+    runGitInVault(vaultPath, ['config', 'user.email', 'vault@quickmemo.local']);
+  } catch {}
+}
+
+function commitLocalVaultChanges(vaultPath, message) {
+  ensureGitIdentity(vaultPath);
+  runGitInVault(vaultPath, ['add', '-A']);
+  const statusOut = runGitInVault(vaultPath, ['status', '--porcelain']);
+  if (statusOut) {
+    runGitInVault(vaultPath, ['commit', '-m', message]);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * 拉取并合并远程 origin/main 分支（支持换新电脑绑定已有仓库时的不相关历史自动合并）
+ */
+function pullAndMergeRemoteMain(vaultPath) {
+  ensureGitIdentity(vaultPath);
+  commitLocalVaultChanges(vaultPath, `backup: local save before sync ${nowReadable()}`);
+
+  try {
+    runGitInVault(vaultPath, ['fetch', 'origin']);
+  } catch (err) {
+    const msg = String(err.message || '');
+    if (msg.includes("couldn't find remote ref") || msg.includes('does not appear to be a git repository')) {
+      return false;
+    }
+    throw new Error(`连接远程仓库失败：${msg}`);
+  }
+
+  let hasRemoteMain = false;
+  try {
+    const rev = runGitInVault(vaultPath, ['rev-parse', '--verify', 'origin/main']);
+    hasRemoteMain = Boolean(rev);
+  } catch {
+    hasRemoteMain = false;
+  }
+  if (!hasRemoteMain) {
+    return false;
+  }
+
+  let hasLocalHead = false;
+  try {
+    const headRev = runGitInVault(vaultPath, ['rev-parse', '--verify', 'HEAD']);
+    hasLocalHead = Boolean(headRev);
+  } catch {
+    hasLocalHead = false;
+  }
+
+  if (!hasLocalHead) {
+    runGitInVault(vaultPath, ['reset', '--hard', 'origin/main']);
+    rebuildDocIndex();
+    return true;
+  }
+
+  try {
+    runGitInVault(vaultPath, [
+      'merge',
+      'origin/main',
+      '--allow-unrelated-histories',
+      '-X',
+      'theirs',
+      '--no-edit',
+      '-m',
+      `chore: merge remote vault ${nowReadable()}`
+    ]);
+  } catch (mergeErr) {
+    try {
+      runGitInVault(vaultPath, ['checkout', '--theirs', '.']);
+      runGitInVault(vaultPath, ['add', '-A']);
+      runGitInVault(vaultPath, ['commit', '-m', `chore: resolve remote vault merge ${nowReadable()}`]);
+    } catch {
+      try {
+        runGitInVault(vaultPath, ['merge', '--abort']);
+      } catch {}
+      throw new Error(`合并远程知识库失败：${mergeErr.message}`);
+    }
+  }
+
+  rebuildDocIndex();
+  return true;
+}
+
 function maskRemoteUrl(rawUrl = '') {
   return String(rawUrl || '').replace(/https:\/\/([^/@:]+):([^/@]+)@/i, 'https://');
 }
@@ -215,6 +312,7 @@ export async function linkVaultToGitHub({
       runGitInVault(vaultPath, ['branch', '-M', 'main']);
     } catch {}
   }
+  ensureGitIdentity(vaultPath);
 
   // 确保 vault 内部有一个干净的 .gitignore（只忽略系统垃圾文件，保留所有 .md 和 assets）
   const vaultGitignore = path.join(vaultPath, '.gitignore');
@@ -345,8 +443,8 @@ export async function linkVaultToGitHub({
     }
   });
 
-  // 立即执行首次提交与推送
-  const syncRes = syncVaultGit({ action: 'push' });
+  // 立即执行双向同步（若远程已有旧电脑的笔记，先拉取合并到本地并重建索引，再推送到远程）
+  const syncRes = syncVaultGit({ action: 'both' });
   return {
     ok: true,
     remoteUrl: displayRemoteUrl,
@@ -357,15 +455,17 @@ export async function linkVaultToGitHub({
 }
 
 /**
- * 执行 Vault 知识库与 GitHub 私有仓库的推送 (push) 或拉取 (pull)
+ * 执行 Vault 知识库与远程私有仓库的推送 (push)、拉取 (pull) 或双向同步 (both)
  */
 export function syncVaultGit({ action = 'push' } = {}) {
   const config = getConfig();
   const vaultPath = config.vaultPath;
   const gitDir = path.join(vaultPath, '.git');
   if (!fs.existsSync(gitDir)) {
-    throw new Error('当前本地库尚未初始化 Git，请先关联 GitHub 私有仓库');
+    throw new Error('当前本地库尚未初始化 Git，请先关联私有仓库');
   }
+
+  ensureGitIdentity(vaultPath);
 
   let remoteUrl = '';
   try {
@@ -380,32 +480,27 @@ export function syncVaultGit({ action = 'push' } = {}) {
   } catch {}
 
   if (action === 'pull' || action === 'both') {
-    try {
-      // 先暂存本地改动再拉取
-      runGitInVault(vaultPath, ['add', '-A']);
-      const statusOut = runGitInVault(vaultPath, ['status', '--porcelain']);
-      if (statusOut) {
-        runGitInVault(vaultPath, ['commit', '-m', `backup: pre-pull save ${nowReadable()}`]);
-      }
-      runGitInVault(vaultPath, ['pull', 'origin', 'main', '--rebase']);
-      rebuildDocIndex();
-    } catch (err) {
-      // 如果远程仓库还是空的，忽略 pull 报错
-      if (!String(err.message || '').includes("couldn't find remote ref")) {
-        throw new Error(`拉取失败：${err.message}`);
-      }
-    }
+    pullAndMergeRemoteMain(vaultPath);
   }
 
   let pushed = false;
   if (action === 'push' || action === 'both') {
-    runGitInVault(vaultPath, ['add', '-A']);
-    const statusOut = runGitInVault(vaultPath, ['status', '--porcelain']);
-    if (statusOut) {
-      runGitInVault(vaultPath, ['commit', '-m', `backup: QuickMemo vault sync ${nowReadable()}`]);
+    commitLocalVaultChanges(vaultPath, `backup: QuickMemo vault sync ${nowReadable()}`);
+    try {
+      runGitInVault(vaultPath, ['push', '-u', 'origin', 'main']);
+      pushed = true;
+    } catch (pushErr) {
+      const msg = String(pushErr.message || '');
+      // 如果因为远程包含本地没有的提交（如换新电脑或其它设备刚推送过）导致 push 被拒，自动先拉取合并再重推
+      if (msg.includes('fetch first') || msg.includes('non-fast-forward') || msg.includes('[rejected]')) {
+        pullAndMergeRemoteMain(vaultPath);
+        commitLocalVaultChanges(vaultPath, `backup: QuickMemo vault sync ${nowReadable()}`);
+        runGitInVault(vaultPath, ['push', '-u', 'origin', 'main']);
+        pushed = true;
+      } else {
+        throw new Error(`推送失败：${msg}`);
+      }
     }
-    runGitInVault(vaultPath, ['push', '-u', 'origin', 'main']);
-    pushed = true;
   }
 
   return {

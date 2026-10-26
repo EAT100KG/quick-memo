@@ -2350,9 +2350,11 @@ function bindEvents() {
         });
         state.vaultGitStatus = res.status;
         state.config = await Bridge.getConfig();
+        state.memos = await Bridge.listMemos();
+        await refreshIndexStats();
         state.gitFeedback = {
           ok: true,
-          text: `✅ 已成功绑定远程私有仓库 (${res.remoteUrl}) 并完成首次云端推送！`
+          text: `✅ 已成功绑定远程私有仓库 (${res.remoteUrl}) 并完成双向同步（当前共 ${state.memos.length} 篇笔记）！`
         };
       } catch (err) {
         state.gitFeedback = {
@@ -2384,6 +2386,8 @@ function bindEvents() {
         });
         state.vaultGitStatus = res.status;
         state.config = await Bridge.getConfig();
+        state.memos = await Bridge.listMemos();
+        await refreshIndexStats();
         state.gitFeedback = {
           ok: true,
           text: `🎉 已自动在你的 ${state.gitProviderTab === 'gitee' ? 'Gitee 码云' : 'GitHub'} 账号下创建私有仓库 ${res.remoteUrl} 并推送全部本地 Markdown 笔记！`
@@ -2409,6 +2413,8 @@ function bindEvents() {
       try {
         const res = await Bridge.syncVaultGit('push');
         state.vaultGitStatus = res.status;
+        state.memos = await Bridge.listMemos();
+        await refreshIndexStats();
         state.gitFeedback = {
           ok: true,
           text: `✅ 已推送同步到 GitHub 私有库 (${res.syncedAt})`
