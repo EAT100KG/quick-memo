@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { exec } from 'node:child_process';
+import { exec, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -9,6 +9,8 @@ const __dirname = path.dirname(__filename);
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 const CONFIG_PATH = path.join(PROJECT_ROOT, '.quick-memo-config.json');
 const DEFAULT_VAULT_PATH = path.join(PROJECT_ROOT, 'vault');
+const REG_RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
+const REG_VALUE_NAME = 'QuickMemo';
 
 export const DEFAULT_CATEGORIES = [
   { id: '01-灵感与备忘', name: '灵感与备忘', icon: '💡', desc: '随手记下的想法、灵感、日常备忘、语录摘抄' },
@@ -23,6 +25,8 @@ export const DEFAULT_CATEGORIES = [
 export const DEFAULT_CONFIG = {
   vaultPath: DEFAULT_VAULT_PATH,
   shortcut: 'Alt+Space',
+  autoStart: false,
+  autoStartSilent: true,
   alwaysOnTopInQuickMode: true,
   hideAfterSubmit: false,
   llm: {
@@ -36,14 +40,109 @@ export const DEFAULT_CONFIG = {
   categories: DEFAULT_CATEGORIES
 };
 
+export function getAutoStartTargetCommand(silent = true) {
+  const exePath = path.join(PROJECT_ROOT, 'QuickMemo.exe');
+  if (fs.existsSync(exePath)) {
+    return `"${exePath}"${silent ? ' --autostart' : ''}`;
+  }
+  const standalonePath = path.join(PROJECT_ROOT, 'server', 'standalone.js');
+  return `"${process.execPath}" "${standalonePath}"${silent ? '' : ' --open'}`;
+}
+
+export function getAutoStartStatus() {
+  const exePath = path.join(PROJECT_ROOT, 'QuickMemo.exe');
+  if (process.platform !== 'win32') {
+    return {
+      supported: false,
+      enabled: false,
+      command: '',
+      exePath
+    };
+  }
+  try {
+    const out = execFileSync('reg', ['query', REG_RUN_KEY, '/v', REG_VALUE_NAME], {
+      encoding: 'utf-8',
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'ignore']
+    });
+    const match = String(out || '').match(/REG_SZ\s+(.+)$/im);
+    const command = match ? match[1].trim() : getAutoStartTargetCommand(true);
+    return {
+      supported: true,
+      enabled: true,
+      command,
+      exePath
+    };
+  } catch {
+    return {
+      supported: true,
+      enabled: false,
+      command: '',
+      exePath
+    };
+  }
+}
+
+export function applyAutoStartSetting(enabled, silent = true) {
+  if (process.platform !== 'win32') {
+    return getAutoStartStatus();
+  }
+  try {
+    if (enabled) {
+      const cmd = getAutoStartTargetCommand(silent);
+      execFileSync(
+        'reg',
+        ['add', REG_RUN_KEY, '/v', REG_VALUE_NAME, '/t', 'REG_SZ', '/d', cmd, '/f'],
+        { encoding: 'utf-8', windowsHide: true, stdio: 'ignore' }
+      );
+    } else {
+      execFileSync(
+        'reg',
+        ['delete', REG_RUN_KEY, '/v', REG_VALUE_NAME, '/f'],
+        { encoding: 'utf-8', windowsHide: true, stdio: 'ignore' }
+      );
+    }
+  } catch {
+    // 忽略删除不存在的注册表项时的报错
+  }
+  return getAutoStartStatus();
+}
+
+export function setAutoStart({ enabled, autoStartSilent } = {}) {
+  const current = getConfig();
+  const nextEnabled = enabled !== undefined ? Boolean(enabled) : Boolean(current.autoStart);
+  const nextSilent = autoStartSilent !== undefined ? Boolean(autoStartSilent) : (current.autoStartSilent !== false);
+  const status = applyAutoStartSetting(nextEnabled, nextSilent);
+  const saved = saveConfig({
+    ...current,
+    autoStart: status.enabled,
+    autoStartSilent: nextSilent
+  });
+  return {
+    ok: true,
+    enabled: status.enabled,
+    autoStartSilent: nextSilent,
+    command: status.command || getAutoStartTargetCommand(nextSilent),
+    config: saved
+  };
+}
+
 export function getConfig() {
+  const regStatus = getAutoStartStatus();
   try {
     if (fs.existsSync(CONFIG_PATH)) {
       const raw = fs.readFileSync(CONFIG_PATH, 'utf-8');
       const parsed = JSON.parse(raw);
+      const silentPref = parsed.autoStartSilent !== undefined ? Boolean(parsed.autoStartSilent) : true;
+      const autoStartEnabled = process.platform === 'win32'
+        ? regStatus.enabled
+        : Boolean(parsed.autoStart);
       return {
         ...DEFAULT_CONFIG,
         ...parsed,
+        autoStart: autoStartEnabled,
+        autoStartSilent: silentPref,
+        autoStartCommand: regStatus.command || getAutoStartTargetCommand(silentPref),
         llm: { ...DEFAULT_CONFIG.llm, ...(parsed.llm || {}) },
         categories: Array.isArray(parsed.categories) && parsed.categories.length > 0
           ? parsed.categories
@@ -53,14 +152,25 @@ export function getConfig() {
   } catch (err) {
     console.error('[VaultManager] Failed to read config:', err);
   }
-  saveConfig(DEFAULT_CONFIG);
-  return DEFAULT_CONFIG;
+  const initial = {
+    ...DEFAULT_CONFIG,
+    autoStart: regStatus.enabled,
+    autoStartCommand: regStatus.command || getAutoStartTargetCommand(true)
+  };
+  saveConfig(initial);
+  return initial;
 }
 
 export function saveConfig(newConfig) {
+  const silentPref = newConfig.autoStartSilent !== undefined ? Boolean(newConfig.autoStartSilent) : true;
+  const wantAutoStart = Boolean(newConfig.autoStart);
+  const regStatus = applyAutoStartSetting(wantAutoStart, silentPref);
   const merged = {
     ...DEFAULT_CONFIG,
     ...newConfig,
+    autoStart: process.platform === 'win32' ? regStatus.enabled : wantAutoStart,
+    autoStartSilent: silentPref,
+    autoStartCommand: regStatus.command || getAutoStartTargetCommand(silentPref),
     llm: { ...DEFAULT_CONFIG.llm, ...(newConfig.llm || {}) },
     categories: Array.isArray(newConfig.categories) && newConfig.categories.length > 0
       ? newConfig.categories

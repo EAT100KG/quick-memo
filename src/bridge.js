@@ -175,6 +175,17 @@ export const Bridge = {
     });
   },
 
+  async getAutoStart() {
+    return apiRequest('/api/autostart');
+  },
+
+  async setAutoStart(payload = {}) {
+    return apiRequest('/api/autostart', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+
   async listMemos() {
     if (isTauri()) {
       try {

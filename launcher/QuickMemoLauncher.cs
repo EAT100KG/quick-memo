@@ -9,8 +9,10 @@ using System.IO.Compression;
 using System.Reflection;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Windows.Forms;
+using Microsoft.Win32;
 
 namespace QuickMemo
 {
@@ -354,8 +356,10 @@ namespace QuickMemo
         private bool _wasMouseDragging = false;
         private DateTime _lastHotKeyTime = DateTime.MinValue;
         private Rectangle _expandedBounds = new Rectangle(200, 120, 1060, 720);
+        private const string RUN_REG_KEY = @"Software\Microsoft\Windows\CurrentVersion\Run";
+        private const string RUN_VALUE_NAME = "QuickMemo";
 
-        public QuickMemoAppContext(string appRoot)
+        public QuickMemoAppContext(string appRoot, bool isAutoStartLaunch = false)
         {
             _appRoot = appRoot;
             _cmdFilePath = Path.Combine(_appRoot, ".window-cmd.json");
@@ -376,15 +380,133 @@ namespace QuickMemo
             catch { }
 
             EnsureEmbeddedAppFilesExtracted();
+            SyncAutoStartRegistryOnStartup();
             EnsureBackendRunning();
             SetupTrayIcon();
             SetupEdgePeekForm();
             SetupGlobalHotKey();
-            OpenOrActivateWindow();
+
+            if (isAutoStartLaunch && IsAutoStartSilentInConfig())
+            {
+                _hiddenToTray = true;
+                _trayIcon.ShowBalloonTip(
+                    2200,
+                    "QuickMemo 已随开机在后台就绪",
+                    "随时按 Alt + Space 即可呼出闪念收纳盒。",
+                    ToolTipIcon.Info
+                );
+            }
+            else
+            {
+                OpenOrActivateWindow();
+            }
 
             _monitorTimer = new System.Windows.Forms.Timer { Interval = 90 };
             _monitorTimer.Tick += OnMonitorTick;
             _monitorTimer.Start();
+        }
+
+        private bool IsAutoStartEnabledInRegistry()
+        {
+            try
+            {
+                using (RegistryKey key = Registry.CurrentUser.OpenSubKey(RUN_REG_KEY, false))
+                {
+                    if (key == null) return false;
+                    object val = key.GetValue(RUN_VALUE_NAME);
+                    return val != null && !string.IsNullOrEmpty(val.ToString());
+                }
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private bool IsAutoStartSilentInConfig()
+        {
+            try
+            {
+                string cfgPath = Path.Combine(_appRoot, ".quick-memo-config.json");
+                if (File.Exists(cfgPath))
+                {
+                    string raw = File.ReadAllText(cfgPath);
+                    if (Regex.IsMatch(raw, "\"autoStartSilent\"\\s*:\\s*false", RegexOptions.IgnoreCase))
+                    {
+                        return false;
+                    }
+                }
+            }
+            catch { }
+            return true;
+        }
+
+        private void SyncAutoStartRegistryOnStartup()
+        {
+            try
+            {
+                string cfgPath = Path.Combine(_appRoot, ".quick-memo-config.json");
+                if (File.Exists(cfgPath))
+                {
+                    string raw = File.ReadAllText(cfgPath);
+                    if (Regex.IsMatch(raw, "\"autoStart\"\\s*:\\s*true", RegexOptions.IgnoreCase))
+                    {
+                        SetAutoStart(true, false);
+                    }
+                }
+            }
+            catch { }
+        }
+
+        private void SetAutoStart(bool enabled, bool updateConfigFile = true)
+        {
+            try
+            {
+                using (RegistryKey key = Registry.CurrentUser.OpenSubKey(RUN_REG_KEY, true))
+                {
+                    if (key != null)
+                    {
+                        if (enabled)
+                        {
+                            bool silent = IsAutoStartSilentInConfig();
+                            string exePath = Application.ExecutablePath;
+                            string cmd = "\"" + exePath + "\"" + (silent ? " --autostart" : "");
+                            key.SetValue(RUN_VALUE_NAME, cmd, RegistryValueKind.String);
+                        }
+                        else
+                        {
+                            if (key.GetValue(RUN_VALUE_NAME) != null)
+                            {
+                                key.DeleteValue(RUN_VALUE_NAME, false);
+                            }
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            if (updateConfigFile)
+            {
+                try
+                {
+                    string cfgPath = Path.Combine(_appRoot, ".quick-memo-config.json");
+                    if (File.Exists(cfgPath))
+                    {
+                        string raw = File.ReadAllText(cfgPath);
+                        string boolStr = enabled ? "true" : "false";
+                        if (Regex.IsMatch(raw, "\"autoStart\"\\s*:\\s*(true|false)", RegexOptions.IgnoreCase))
+                        {
+                            raw = Regex.Replace(raw, "\"autoStart\"\\s*:\\s*(true|false)", "\"autoStart\": " + boolStr, RegexOptions.IgnoreCase);
+                        }
+                        else
+                        {
+                            raw = Regex.Replace(raw, "^\\s*\\{", "{\r\n  \"autoStart\": " + boolStr + ",");
+                        }
+                        File.WriteAllText(cfgPath, raw);
+                    }
+                }
+                catch { }
+            }
         }
 
         /// <summary>
@@ -514,6 +636,28 @@ namespace QuickMemo
             var vaultItem = new ToolStripMenuItem("📂 打开本地 Markdown 文件夹");
             vaultItem.Click += (s, e) => OpenVaultFolder();
 
+            var autoStartItem = new ToolStripMenuItem("🚀 开机自动启动")
+            {
+                Checked = IsAutoStartEnabledInRegistry()
+            };
+            autoStartItem.Click += (s, e) =>
+            {
+                bool nextState = !IsAutoStartEnabledInRegistry();
+                SetAutoStart(nextState, true);
+                autoStartItem.Checked = nextState;
+                _trayIcon.ShowBalloonTip(
+                    2000,
+                    "QuickMemo 开机自启设置",
+                    nextState ? "已开启开机自动启动（登录 Windows 后自动后台就绪）" : "已关闭开机自动启动",
+                    ToolTipIcon.Info
+                );
+            };
+
+            menu.Opening += (s, e) =>
+            {
+                autoStartItem.Checked = IsAutoStartEnabledInRegistry();
+            };
+
             var exitItem = new ToolStripMenuItem("❌ 彻底退出程序");
             exitItem.Click += (s, e) => ExitApplication();
 
@@ -521,6 +665,7 @@ namespace QuickMemo
             menu.Items.Add(dockRightItem);
             menu.Items.Add(undockItem);
             menu.Items.Add(new ToolStripSeparator());
+            menu.Items.Add(autoStartItem);
             menu.Items.Add(vaultItem);
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(exitItem);
@@ -1406,7 +1551,10 @@ namespace QuickMemo
 
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
-                Application.Run(new QuickMemoAppContext(appRoot));
+                bool isAutoStart = args != null && Array.Exists(args, a =>
+                    string.Equals(a, "--autostart", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(a, "--silent", StringComparison.OrdinalIgnoreCase));
+                Application.Run(new QuickMemoAppContext(appRoot, isAutoStart));
             }
         }
     }

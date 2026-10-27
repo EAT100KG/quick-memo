@@ -26,11 +26,19 @@ pub struct LlmConfig {
     pub custom_system_prompt: String,
 }
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppConfig {
     pub vault_path: String,
     pub shortcut: String,
+    #[serde(default)]
+    pub auto_start: bool,
+    #[serde(default = "default_true")]
+    pub auto_start_silent: bool,
     pub llm: LlmConfig,
     pub categories: Vec<CategoryConfig>,
 }
@@ -152,6 +160,8 @@ fn default_config() -> AppConfig {
     AppConfig {
         vault_path: cwd.join("vault").to_string_lossy().to_string(),
         shortcut: "Alt+Space".into(),
+        auto_start: false,
+        auto_start_silent: true,
         llm: LlmConfig {
             enabled: true,
             provider_preset: "deepseek".into(),

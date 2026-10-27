@@ -64,7 +64,11 @@ const state = {
   checkingUpdate: false,
   performingUpdate: false,
   updateFeedback: null,
-  qrPreviewModal: null // { title, imgUrl }
+  qrPreviewModal: null, // { title, imgUrl }
+
+  // 开机自启动开关状态
+  togglingAutoStart: false,
+  autoStartFeedback: null
 };
 
 function isPdfAttachment(att = {}) {
@@ -1009,6 +1013,55 @@ function renderSettingsView() {
 
   return `
     <main class="settings-shell">
+      <section class="settings-card autostart-card">
+        <div class="autostart-header-row">
+          <div class="autostart-title-group">
+            <div class="autostart-title-line">
+              <h3>🚀 开机自动启动与后台常驻设置</h3>
+              <span class="autostart-status-pill ${cfg.autoStart ? 'is-on' : 'is-off'}">
+                ${cfg.autoStart ? '🟢 已开启开机自启' : '⚪ 未开启开机自启'}
+              </span>
+            </div>
+            <p class="settings-hint" style="margin-bottom: 0;">
+              开启后，登录 Windows 系统时将自动启动 QuickMemo 本地服务与右下角托盘图标，无需每次手动双击运行（写入当前用户注册表启动项 <code>HKCU\\...\\Run</code>，免管理员权限，可随时一键关闭）。
+            </p>
+          </div>
+
+          <label class="switch-toggle" title="${cfg.autoStart ? '点击关闭开机自启动' : '点击开启开机自启动'}">
+            <input
+              type="checkbox"
+              id="cfg-autostart-enabled"
+              ${cfg.autoStart ? 'checked' : ''}
+              ${state.togglingAutoStart ? 'disabled' : ''}
+            />
+            <span class="switch-slider"></span>
+            <span class="switch-label-text">${cfg.autoStart ? '已开启' : '已关闭'}</span>
+          </label>
+        </div>
+
+        <div class="autostart-options-box">
+          <label class="form-field-inline full">
+            <input
+              type="checkbox"
+              id="cfg-autostart-silent"
+              ${cfg.autoStartSilent !== false ? 'checked' : ''}
+              ${state.togglingAutoStart ? 'disabled' : ''}
+            />
+            <span>开机自启时静默驻留系统托盘（不主动弹出主窗口打扰，随时按 <kbd>Alt + Space</kbd> 秒级呼出）</span>
+          </label>
+          <div class="autostart-cmd-line">
+            <span class="autostart-cmd-label">📍 启动命令：</span>
+            <code class="autostart-cmd-code">${escapeHtml(cfg.autoStartCommand || 'QuickMemo.exe --autostart')}</code>
+          </div>
+        </div>
+
+        ${state.autoStartFeedback ? `
+          <div class="llm-test-status ${state.autoStartFeedback.ok ? 'ok' : 'err'}" style="margin-top: 10px; display: block;">
+            ${escapeHtml(state.autoStartFeedback.text)}
+          </div>
+        ` : ''}
+      </section>
+
       <section class="settings-card">
         <h3>🤖 OpenAI 兼容接口设置</h3>
         <p class="settings-hint">支持任意标准 OpenAI 兼容接口（<code>/v1/chat/completions</code>）。配置后可用于自动起标题、提炼摘要、文件重命名与对话式寻物问答。</p>
@@ -1786,11 +1839,16 @@ export function render() {
 function bindEvents() {
   // 顶部导航切换
   document.querySelectorAll('[data-tab]').forEach((btn) => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       state.activeTab = btn.getAttribute('data-tab');
       render();
       if (state.activeTab === 'capture') {
         focusCaptureInput();
+      } else if (state.activeTab === 'settings') {
+        try {
+          state.config = await Bridge.getConfig();
+          render();
+        } catch {}
       } else if (state.activeTab === 'about' && !state.updateCheck && !state.checkingUpdate) {
         handleCheckReleaseUpdate({ silent: false });
       }
@@ -2299,6 +2357,50 @@ function bindEvents() {
   }
 
   // 设置页事件
+  const autoStartToggle = document.getElementById('cfg-autostart-enabled');
+  const autoStartSilentCheckbox = document.getElementById('cfg-autostart-silent');
+  const handleAutoStartChange = async () => {
+    if (state.togglingAutoStart) return;
+    const enabled = autoStartToggle?.checked ?? Boolean(state.config?.autoStart);
+    const autoStartSilent = autoStartSilentCheckbox?.checked ?? (state.config?.autoStartSilent !== false);
+    state.togglingAutoStart = true;
+    state.autoStartFeedback = null;
+    render();
+    try {
+      const res = await Bridge.setAutoStart({ enabled, autoStartSilent });
+      if (res.config) {
+        state.config = res.config;
+      } else if (state.config) {
+        state.config.autoStart = res.enabled;
+        state.config.autoStartSilent = res.autoStartSilent;
+        state.config.autoStartCommand = res.command;
+      }
+      state.autoStartFeedback = {
+        ok: true,
+        text: res.enabled
+          ? (res.autoStartSilent
+              ? '✅ 已开启开机自动启动（开机后将静默驻留系统托盘，按 Alt + Space 随时呼出）'
+              : '✅ 已开启开机自动启动（开机后将自动打开 QuickMemo 主窗口）')
+          : '⚪ 已关闭开机自动启动（已从 Windows 启动项移除）'
+      };
+    } catch (err) {
+      state.autoStartFeedback = {
+        ok: false,
+        text: `❌ 设置开机自启动失败：${err.message}`
+      };
+    } finally {
+      state.togglingAutoStart = false;
+      render();
+    }
+  };
+
+  if (autoStartToggle) {
+    autoStartToggle.addEventListener('change', handleAutoStartChange);
+  }
+  if (autoStartSilentCheckbox) {
+    autoStartSilentCheckbox.addEventListener('change', handleAutoStartChange);
+  }
+
   const btnExportZip = document.getElementById('btn-export-vault-zip');
   if (btnExportZip) {
     btnExportZip.addEventListener('click', handleExportVaultZip);
@@ -2502,6 +2604,8 @@ function bindEvents() {
       const model = document.getElementById('cfg-llm-model')?.value.trim() || '';
       const customSystemPrompt = document.getElementById('cfg-llm-prompt')?.value.trim() || '';
       const vaultPath = document.getElementById('cfg-vault-path')?.value.trim() || state.config.vaultPath;
+      const autoStart = document.getElementById('cfg-autostart-enabled')?.checked ?? Boolean(state.config.autoStart);
+      const autoStartSilent = document.getElementById('cfg-autostart-silent')?.checked ?? (state.config.autoStartSilent !== false);
 
       const catRows = document.querySelectorAll('.cat-config-row');
       const categories = [];
@@ -2518,6 +2622,8 @@ function bindEvents() {
       const saved = await Bridge.saveConfig({
         ...state.config,
         vaultPath,
+        autoStart,
+        autoStartSilent,
         vaultGit: {
           ...(state.config.vaultGit || {}),
           provider: state.gitProviderTab,

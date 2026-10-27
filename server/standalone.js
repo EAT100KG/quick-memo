@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url';
 import {
   getConfig,
   saveConfig,
+  getAutoStartStatus,
+  setAutoStart,
   listMemos,
   saveMemo,
   updateMemo,
@@ -173,6 +175,19 @@ export function startStandaloneServer(port = 1420, openWindow = false) {
         if (url.pathname === '/api/config' && req.method === 'POST') {
           const body = await readJsonBody(req);
           return sendJson(res, 200, saveConfig(body));
+        }
+        if (url.pathname === '/api/autostart' && req.method === 'GET') {
+          const cfg = getConfig();
+          const st = getAutoStartStatus();
+          return sendJson(res, 200, {
+            ...st,
+            autoStartSilent: cfg.autoStartSilent !== false,
+            command: st.command || cfg.autoStartCommand
+          });
+        }
+        if (url.pathname === '/api/autostart' && req.method === 'POST') {
+          const body = await readJsonBody(req);
+          return sendJson(res, 200, setAutoStart(body));
         }
         if (url.pathname === '/api/memos' && req.method === 'GET') {
           return sendJson(res, 200, listMemos());
