@@ -1,0 +1,102 @@
+/* ============================================================
+   QuickMemo macOS 壳注入样式（由 Swift 壳以 WKUserScript 注入）
+   不改仓库源码，上游更新不会冲突。
+   解决三件事：
+   1. 干掉 .app-container 的 860px 硬下限 —— 窗口变小不再裁切内容
+   2. 顶栏允许换行 —— brand / nav / actions 不再溢出或被切
+   3. 窄窗口下自动收窄按钮与隐藏快捷键提示
+   ============================================================ */
+
+html, body {
+  height: 100%;
+}
+
+.app-container {
+  min-width: 0 !important;   /* 原 860px 是 Windows 固定窗口时代的假设 */
+  min-height: 0 !important;  /* 原 560px，窗口可缩到 600 时不必留白 */
+}
+
+/* ---- 顶栏：允许换行，任何宽度都不重叠 ---- */
+.topbar {
+  height: auto !important;
+  min-height: 56px;
+  flex-wrap: wrap !important;
+  white-space: normal !important;
+  row-gap: 6px;
+  column-gap: 10px;
+  padding-top: 7px !important;
+  padding-bottom: 7px !important;
+}
+
+.brand {
+  min-width: 0;
+}
+
+.nav-tabs {
+  flex-wrap: wrap !important;
+  min-width: 0;
+}
+
+.nav-tab {
+  flex-shrink: 1 !important;
+}
+
+.topbar-actions {
+  flex-wrap: wrap !important;
+  margin-left: auto;      /* 换行后按钮仍靠右 */
+}
+
+/* ---- flex 布局里的滚动容器必须能压缩，否则内容撑开父级 ---- */
+.capture-shell,
+.vault-layout,
+.settings-shell,
+.settings-view {
+  min-height: 0;
+  min-width: 0;
+}
+
+/* ---- 知识库三栏：窄窗口按比例收窄，中栏不再被挤成 0 ---- */
+.vault-layout {
+  grid-template-columns: minmax(180px, 240px) minmax(260px, 350px) minmax(0, 1fr) !important;
+}
+
+/* ---- 分级收窄 ---- */
+@media (max-width: 1240px) {
+  .nav-tab kbd {
+    display: none !important;   /* 快捷键提示先让位 */
+  }
+  .brand-sub {
+    display: none !important;
+  }
+}
+
+@media (max-width: 1060px) {
+  .nav-tab {
+    padding: 6px 9px !important;
+  }
+  .topbar-actions .ghost-btn {
+    padding: 6px 9px !important;
+    font-size: 12px !important;
+  }
+}
+
+@media (max-width: 900px) {
+  .topbar {
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+  }
+  .brand-title {
+    font-size: 14px !important;
+  }
+  .vault-layout {
+    grid-template-columns: minmax(150px, 200px) minmax(0, 1fr) !important;
+  }
+  .capture-shell {
+    padding: 16px 14px !important;
+  }
+}
+
+/* ---- 拖动提示：顶栏空白处可拖窗 ---- */
+.topbar {
+  cursor: default;
+}

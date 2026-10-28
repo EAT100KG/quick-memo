@@ -40,3 +40,18 @@
 npm install
 npm run tauri:build
 ```
+
+---
+
+## macOS 支持
+
+macOS 端使用原生 AppKit 外壳（`macos/`，非 Tauri），复用同一套 Node 后端与前端，不改页面代码：
+
+```bash
+npm install && npm run build
+cd macos && ./build.sh ..
+open QuickMemoMac.app
+```
+
+支持菜单栏驻留、`⌥Space` 全局呼出、LaunchAgent 开机静默自启、窗口自适应布局。
+详见 [macos/README.md](macos/README.md)。Windows 端用法不受影响。
