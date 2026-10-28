@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { exec, execFileSync } from 'node:child_process';
@@ -7,10 +8,15 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PROJECT_ROOT = path.resolve(__dirname, '..');
-const CONFIG_PATH = path.join(PROJECT_ROOT, '.quick-memo-config.json');
-const DEFAULT_VAULT_PATH = path.join(PROJECT_ROOT, 'vault');
+// macOS/独立运行：用 QUICKMEMO_HOME 指定数据目录（配置与仓库），避免写进 .app 包内破坏签名
+const DATA_HOME = process.env.QUICKMEMO_HOME ? path.resolve(process.env.QUICKMEMO_HOME) : PROJECT_ROOT;
+const CONFIG_PATH = path.join(DATA_HOME, '.quick-memo-config.json');
+const DEFAULT_VAULT_PATH = path.join(DATA_HOME, 'vault');
 const REG_RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
 const REG_VALUE_NAME = 'QuickMemo';
+// macOS 开机自启：LaunchAgent（与 Swift 壳共用同一份 plist，状态天然一致）
+const LAUNCH_AGENT_LABEL = 'com.quickmemo.mac';
+const LAUNCH_AGENT_PLIST_NAME = `${LAUNCH_AGENT_LABEL}.plist`;
 
 export const DEFAULT_CATEGORIES = [
   { id: '01-灵感与备忘', name: '灵感与备忘', icon: '💡', desc: '随手记下的想法、灵感、日常备忘、语录摘抄' },
@@ -40,7 +46,120 @@ export const DEFAULT_CONFIG = {
   categories: DEFAULT_CATEGORIES
 };
 
+// MARK: - macOS 自启辅助
+
+/** 定位 .app 内的可执行文件（plist 需要绝对路径） */
+export function getMacAppExecutable() {
+  const fm = fs;
+  const fromEnv = process.env.QUICKMEMO_APP_PATH;
+  if (fromEnv && fm.existsSync(fromEnv)) return fromEnv;
+
+  // PROJECT_ROOT 形如 <App>.app/Contents/Resources，往上两级即 .app 包
+  const bundle = path.resolve(PROJECT_ROOT, '..', '..');
+  if (bundle.endsWith('.app')) {
+    const macosDir = path.join(bundle, 'Contents', 'MacOS');
+    try {
+      const exe = fs.readdirSync(macosDir).find((n) => !n.startsWith('.') && !n.endsWith('.dSYM'));
+      if (exe) return path.join(macosDir, exe);
+    } catch {
+      /* 忽略 */
+    }
+  }
+
+  const candidates = [
+    '/Applications/QuickMemoMac.app/Contents/MacOS/QuickMemoMac',
+    path.join(os.homedir(), 'Applications/QuickMemoMac.app/Contents/MacOS/QuickMemoMac')
+  ];
+  for (const p of candidates) {
+    if (fm.existsSync(p)) return p;
+  }
+  return '';
+}
+
+export function getMacPlistPath() {
+  return path.join(os.homedir(), 'Library', 'LaunchAgents', LAUNCH_AGENT_PLIST_NAME);
+}
+
+function xmlEscape(s = '') {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+/** 生成 LaunchAgent plist（silent=true 时带 --background，登录后静默驻留菜单栏） */
+function buildLaunchAgentPlist(exePath, silent = true) {
+  const args = [`    <string>${xmlEscape(exePath)}</string>`];
+  if (silent) args.push('    <string>--background</string>');
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${LAUNCH_AGENT_LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+${args.join('\n')}
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Interactive</string>
+  <key>LimitLoadToSessionType</key>
+  <string>Aqua</string>
+</dict>
+</plist>
+`;
+}
+
+function launchctl(args) {
+  try {
+    execFileSync('launchctl', args, {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 8000
+    });
+    return true;
+  } catch {
+    // 已加载 / 未加载时 bootout 都会报错，属正常情况
+    return false;
+  }
+}
+
+function isLaunchAgentLoaded() {
+  try {
+    execFileSync('launchctl', ['print', `gui/${process.getuid()}/${LAUNCH_AGENT_LABEL}`], {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 5000
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 从已有 plist 里读出可执行文件路径与是否静默（用于判断是否指向已移动/删除的 App） */
+function readPlistInfo() {
+  try {
+    const raw = fs.readFileSync(getMacPlistPath(), 'utf-8');
+    const m = raw.match(/<key>ProgramArguments<\/key>\s*<array>([\s\S]*?)<\/array>/);
+    if (!m) return { exe: '', silent: true };
+    const items = [...m[1].matchAll(/<string>([^<]*)<\/string>/g)].map((x) => x[1]);
+    return { exe: items[0] || '', silent: items.includes('--background') };
+  } catch {
+    return { exe: '', silent: true };
+  }
+}
+
 export function getAutoStartTargetCommand(silent = true) {
+  if (process.platform === 'darwin') {
+    const exe = getMacAppExecutable();
+    if (exe) return `"${exe}"${silent ? ' --background' : ''}`;
+    // 找不到 .app 时退回到用 node 直接跑服务（至少服务能起来）
+    const standalonePath = path.join(PROJECT_ROOT, 'server', 'standalone.js');
+    return `"${process.execPath}" "${standalonePath}"`;
+  }
   const exePath = path.join(PROJECT_ROOT, 'QuickMemo.exe');
   if (fs.existsSync(exePath)) {
     return `"${exePath}"${silent ? ' --autostart' : ''}`;
@@ -50,13 +169,33 @@ export function getAutoStartTargetCommand(silent = true) {
 }
 
 export function getAutoStartStatus() {
+  if (process.platform === 'darwin') {
+    const plistPath = getMacPlistPath();
+    const installed = fs.existsSync(plistPath);
+    const info = installed ? readPlistInfo() : { exe: '', silent: true };
+    const broken = installed && info.exe !== '' && !fs.existsSync(info.exe);
+    return {
+      supported: true,
+      enabled: installed,
+      command: info.exe ? `"${info.exe}"${info.silent ? ' --background' : ''}` : getAutoStartTargetCommand(true),
+      exePath: info.exe || getMacAppExecutable(),
+      platform: 'darwin',
+      mechanism: 'LaunchAgent',
+      plistPath,
+      loaded: installed ? isLaunchAgentLoaded() : false,
+      broken
+    };
+  }
+
   const exePath = path.join(PROJECT_ROOT, 'QuickMemo.exe');
   if (process.platform !== 'win32') {
     return {
       supported: false,
       enabled: false,
       command: '',
-      exePath
+      exePath,
+      platform: process.platform,
+      mechanism: 'unsupported'
     };
   }
   try {
@@ -71,19 +210,52 @@ export function getAutoStartStatus() {
       supported: true,
       enabled: true,
       command,
-      exePath
+      exePath,
+      platform: 'win32',
+      mechanism: 'Registry'
     };
   } catch {
     return {
       supported: true,
       enabled: false,
       command: '',
-      exePath
+      exePath,
+      platform: 'win32',
+      mechanism: 'Registry'
     };
   }
 }
 
 export function applyAutoStartSetting(enabled, silent = true) {
+  if (process.platform === 'darwin') {
+    const exe = getMacAppExecutable();
+    const plistPath = getMacPlistPath();
+    const uid = process.getuid();
+
+    if (enabled) {
+      if (!exe) {
+        console.error('[VaultManager] 未能定位 QuickMemoMac.app 可执行文件，无法设置开机自启');
+        return getAutoStartStatus();
+      }
+      try {
+        fs.mkdirSync(path.dirname(plistPath), { recursive: true });
+        fs.writeFileSync(plistPath, buildLaunchAgentPlist(exe, silent), 'utf-8');
+        launchctl(['bootout', `gui/${uid}/${LAUNCH_AGENT_LABEL}`]); // 先卸掉旧的，避免配置不更新
+        launchctl(['bootstrap', `gui/${uid}`, plistPath]);
+      } catch (err) {
+        console.error('[VaultManager] 写入 LaunchAgent 失败:', err);
+      }
+    } else {
+      launchctl(['bootout', `gui/${uid}/${LAUNCH_AGENT_LABEL}`]);
+      try {
+        fs.rmSync(plistPath, { force: true });
+      } catch {
+        /* 忽略 */
+      }
+    }
+    return getAutoStartStatus();
+  }
+
   if (process.platform !== 'win32') {
     return getAutoStartStatus();
   }
@@ -120,9 +292,14 @@ export function setAutoStart({ enabled, autoStartSilent } = {}) {
   });
   return {
     ok: true,
+    supported: status.supported,
     enabled: status.enabled,
     autoStartSilent: nextSilent,
     command: status.command || getAutoStartTargetCommand(nextSilent),
+    platform: process.platform,
+    mechanism: status.mechanism || '',
+    plistPath: status.plistPath || '',
+    broken: Boolean(status.broken),
     config: saved
   };
 }
@@ -134,7 +311,7 @@ export function getConfig() {
       const raw = fs.readFileSync(CONFIG_PATH, 'utf-8');
       const parsed = JSON.parse(raw);
       const silentPref = parsed.autoStartSilent !== undefined ? Boolean(parsed.autoStartSilent) : true;
-      const autoStartEnabled = process.platform === 'win32'
+      const autoStartEnabled = regStatus.supported
         ? regStatus.enabled
         : Boolean(parsed.autoStart);
       return {
@@ -142,7 +319,10 @@ export function getConfig() {
         ...parsed,
         autoStart: autoStartEnabled,
         autoStartSilent: silentPref,
+        autoStartSupported: regStatus.supported,
         autoStartCommand: regStatus.command || getAutoStartTargetCommand(silentPref),
+        autoStartMechanism: regStatus.mechanism || '',
+        platform: process.platform,
         llm: { ...DEFAULT_CONFIG.llm, ...(parsed.llm || {}) },
         categories: Array.isArray(parsed.categories) && parsed.categories.length > 0
           ? parsed.categories
@@ -155,7 +335,10 @@ export function getConfig() {
   const initial = {
     ...DEFAULT_CONFIG,
     autoStart: regStatus.enabled,
-    autoStartCommand: regStatus.command || getAutoStartTargetCommand(true)
+    autoStartSupported: regStatus.supported,
+    autoStartCommand: regStatus.command || getAutoStartTargetCommand(true),
+    autoStartMechanism: regStatus.mechanism || '',
+    platform: process.platform
   };
   saveConfig(initial);
   return initial;
@@ -164,13 +347,22 @@ export function getConfig() {
 export function saveConfig(newConfig) {
   const silentPref = newConfig.autoStartSilent !== undefined ? Boolean(newConfig.autoStartSilent) : true;
   const wantAutoStart = Boolean(newConfig.autoStart);
-  const regStatus = applyAutoStartSetting(wantAutoStart, silentPref);
+  // 状态没变就不要反复 bootout/bootstrap（每次保存配置都动 launchd 会引起抖动）
+  const current = getAutoStartStatus();
+  const desiredCommand = getAutoStartTargetCommand(silentPref);
+  const needApply = !current.supported
+    ? false
+    : (current.enabled !== wantAutoStart) || (wantAutoStart && current.command !== desiredCommand);
+  const regStatus = needApply ? applyAutoStartSetting(wantAutoStart, silentPref) : current;
   const merged = {
     ...DEFAULT_CONFIG,
     ...newConfig,
-    autoStart: process.platform === 'win32' ? regStatus.enabled : wantAutoStart,
+    autoStart: regStatus.supported ? regStatus.enabled : wantAutoStart,
     autoStartSilent: silentPref,
-    autoStartCommand: regStatus.command || getAutoStartTargetCommand(silentPref),
+    autoStartSupported: regStatus.supported,
+    autoStartCommand: regStatus.command || desiredCommand,
+    autoStartMechanism: regStatus.mechanism || '',
+    platform: process.platform,
     llm: { ...DEFAULT_CONFIG.llm, ...(newConfig.llm || {}) },
     categories: Array.isArray(newConfig.categories) && newConfig.categories.length > 0
       ? newConfig.categories

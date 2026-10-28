@@ -71,6 +71,27 @@ const state = {
   autoStartFeedback: null
 };
 
+// —— 平台判断：macOS 版与 Windows 版的文案 / 快捷键 / 自启机制不同 ——
+function currentPlatform() {
+  if (state.config && state.config.platform) return state.config.platform;
+  return /Mac/i.test(navigator.userAgent || '') ? 'darwin' : 'win32';
+}
+
+function isMac() {
+  return currentPlatform() === 'darwin';
+}
+
+/** 全局呼出快捷键（实际注册在原生壳里，这里只用于文案展示） */
+function hotkeyLabel() {
+  return isMac() ? '⌥Space' : 'Alt + Space';
+}
+
+/** 开机自启机制名称 */
+function autostartMechanismName() {
+  if (isMac()) return 'LaunchAgent';
+  return '注册表启动项';
+}
+
 function isPdfAttachment(att = {}) {
   return (
     (att.mimeType || '').toLowerCase() === 'application/pdf' ||
@@ -577,10 +598,10 @@ function renderHeader() {
         <button class="ghost-btn ${state.windowPinned ? 'pinned-active' : ''}" id="btn-win-pin" title="开启后窗口保持在最前，打开微信复制或拖文件时不会被微信盖住">
           📌 ${state.windowPinned ? '已钉在最前' : '钉住窗口'}
         </button>
-        <button class="ghost-btn" id="btn-win-dock-right" title="将窗口贴靠并缩到屏幕右侧外，鼠标移到桌面右边缘或按 Alt+Space 即可滑出">
+        <button class="ghost-btn" id="btn-win-dock-right" title="将窗口贴靠到屏幕右侧并收窄，按 ${hotkeyLabel()} 可呼出">>
           ⇥ 缩到屏幕外
         </button>
-        <button class="ghost-btn" id="btn-open-vault-folder" title="在 Windows 资源管理器中打开本地 Markdown 文件夹">
+        <button class="ghost-btn" id="btn-open-vault-folder" title="${isMac() ? '在访达中打开本地 Markdown 文件夹' : '在 Windows 资源管理器中打开本地 Markdown 文件夹'}">
           📂 打开本地库
         </button>
       </div>
@@ -803,7 +824,7 @@ function renderVaultView() {
                 <span>${c.icon || '📁'} ${escapeHtml(c.name)}</span>
                 <span class="folder-count">${counts[c.id] || 0}</span>
               </button>
-              <button class="folder-open-icon" data-open-cat-dir="${escapeHtml(c.id)}" title="在资源管理器打开此分类目录">↗</button>
+              <button class="folder-open-icon" data-open-cat-dir="${escapeHtml(c.id)}" title="在${isMac() ? '访达' : '资源管理器'}中打开此分类目录">↗</button>
             </div>
           `).join('')}
         </div>
@@ -1023,7 +1044,9 @@ function renderSettingsView() {
               </span>
             </div>
             <p class="settings-hint" style="margin-bottom: 0;">
-              开启后，登录 Windows 系统时将自动启动 QuickMemo 本地服务与右下角托盘图标，无需每次手动双击运行（写入当前用户注册表启动项 <code>HKCU\\...\\Run</code>，免管理员权限，可随时一键关闭）。
+              ${isMac()
+                ? `开启后，登录 macOS 时将自动启动 QuickMemo 本地服务并静默驻留菜单栏图标，无需每次手动运行（写入当前用户的 LaunchAgent <code>~/Library/LaunchAgents/com.quickmemo.mac.plist</code>，无需管理员权限，可随时一键关闭）。`
+                : `开启后，登录 Windows 系统时将自动启动 QuickMemo 本地服务与右下角托盘图标，无需每次手动双击运行（写入当前用户注册表启动项 <code>HKCU\\...\\Run</code>，免管理员权限，可随时一键关闭）。`}
             </p>
           </div>
 
@@ -1047,11 +1070,13 @@ function renderSettingsView() {
               ${cfg.autoStartSilent !== false ? 'checked' : ''}
               ${state.togglingAutoStart ? 'disabled' : ''}
             />
-            <span>开机自启时静默驻留系统托盘（不主动弹出主窗口打扰，随时按 <kbd>Alt + Space</kbd> 秒级呼出）</span>
+            <span>${isMac()
+              ? `开机自启时静默驻留菜单栏（不主动弹出主窗口打扰，随时按 <kbd>${hotkeyLabel()}</kbd> 秒级呼出）`
+              : `开机自启时静默驻留系统托盘（不主动弹出主窗口打扰，随时按 <kbd>${hotkeyLabel()}</kbd> 秒级呼出）`}</span>
           </label>
           <div class="autostart-cmd-line">
             <span class="autostart-cmd-label">📍 启动命令：</span>
-            <code class="autostart-cmd-code">${escapeHtml(cfg.autoStartCommand || 'QuickMemo.exe --autostart')}</code>
+            <code class="autostart-cmd-code">${escapeHtml(cfg.autoStartCommand || (isMac() ? '/Applications/QuickMemoMac.app/Contents/MacOS/QuickMemoMac --background' : 'QuickMemo.exe --autostart'))}</code>
           </div>
         </div>
 
@@ -1112,7 +1137,7 @@ function renderSettingsView() {
         ${state.lastZipExport ? `
           <div class="zip-export-toast">
             <span>✅ 已打包完成：<strong>${escapeHtml(state.lastZipExport.zipFileName)}</strong>（共 ${state.lastZipExport.fileCount} 个文件 · ${escapeHtml(state.lastZipExport.sizeFormatted)}）</span>
-            <button class="mini-btn" data-open-md="${escapeHtml(state.lastZipExport.zipAbsPath)}">📂 在资源管理器查看</button>
+            <button class="mini-btn" data-open-md="${escapeHtml(state.lastZipExport.zipAbsPath)}">📂 在${isMac() ? '访达' : '资源管理器'}查看</button>
           </div>
         ` : ''}
       </section>
@@ -1599,7 +1624,7 @@ function renderAboutView() {
           <div class="version-box">
             <div class="version-box-label">💻 当前本地版本</div>
             <div class="version-box-val">v${escapeHtml(localVer)}</div>
-            <div class="version-box-meta">运行环境：Windows x64 桌面端</div>
+            <div class="version-box-meta">运行环境：${isMac() ? 'macOS 桌面端' : 'Windows x64 桌面端'}</div>
           </div>
 
           <div class="version-box ${hasUpdate ? 'highlight-new' : ''}">
@@ -1610,7 +1635,9 @@ function renderAboutView() {
             <div class="version-box-meta">
               ${chk?.publishedAt
                 ? `发布于 ${escapeHtml(chk.publishedAt)}${chk.assetSize ? ` · 安装包 ${formatSize(chk.assetSize)}` : ''}`
-                : '支持一键拉取 QuickMemo-Windows-x64.zip'}
+                : isMac()
+                  ? 'macOS 版不会自动覆盖安装，请用本地 build.sh 重新打包'
+                  : '支持一键拉取 QuickMemo-Windows-x64.zip'}
             </div>
           </div>
         </div>
@@ -1620,12 +1647,14 @@ function renderAboutView() {
             ${state.checkingUpdate ? '⏳ 正在检测 GitHub Release...' : '🔍 检测 GitHub 最新 Release'}
           </button>
 
-          <button class="primary-submit-btn ${hasUpdate ? 'pulse-upgrade' : ''}" id="btn-perform-release-update" ${state.performingUpdate || state.checkingUpdate ? 'disabled' : ''}>
-            ${state.performingUpdate
-              ? '⏳ 正在拉取最新包并执行升级...'
-              : hasUpdate
-                ? `⚡ 立即拉取最新包 (${escapeHtml(chk.latestTag)}) 并升级重启`
-                : `🔄 拉取最新 Release 包 (${escapeHtml(chk?.latestTag || 'v' + localVer)}) 并覆盖更新`}
+          <button class="primary-submit-btn ${hasUpdate && !isMac() ? 'pulse-upgrade' : ''}" id="btn-perform-release-update" ${state.performingUpdate || state.checkingUpdate || isMac() ? 'disabled' : ''}>
+            ${isMac()
+              ? '🚫 macOS 版请在本地重新打包更新'
+              : state.performingUpdate
+                ? '⏳ 正在拉取最新包并执行升级...'
+                : hasUpdate
+                  ? `⚡ 立即拉取最新包 (${escapeHtml(chk.latestTag)}) 并升级重启`
+                  : `🔄 拉取最新 Release 包 (${escapeHtml(chk?.latestTag || 'v' + localVer)}) 并覆盖更新`}
           </button>
         </div>
 
@@ -1727,7 +1756,7 @@ function renderAboutView() {
         <div class="about-feature-grid">
           <div class="about-feature-item">
             <div class="about-feature-title">⚡ 全局唤起与边缘隐藏</div>
-            <div class="about-feature-desc">随时按 <kbd>Alt + Space</kbd> 唤起或隐藏窗口；支持钉在最前与贴靠桌面右侧自动滑出。</div>
+            <div class="about-feature-desc">随时按 <kbd>${hotkeyLabel()}</kbd> 唤起或隐藏窗口；支持钉在最前与贴靠桌面右侧自动滑出。</div>
           </div>
           <div class="about-feature-item">
             <div class="about-feature-title">🤖 OpenAI 兼容自动归档</div>
@@ -2379,9 +2408,9 @@ function bindEvents() {
         ok: true,
         text: res.enabled
           ? (res.autoStartSilent
-              ? '✅ 已开启开机自动启动（开机后将静默驻留系统托盘，按 Alt + Space 随时呼出）'
+              ? `✅ 已开启开机自动启动（开机后将静默驻留${isMac() ? '菜单栏' : '系统托盘'}，按 ${hotkeyLabel()} 随时呼出）`
               : '✅ 已开启开机自动启动（开机后将自动打开 QuickMemo 主窗口）')
-          : '⚪ 已关闭开机自动启动（已从 Windows 启动项移除）'
+          : `⚪ 已关闭开机自动启动（已从${autostartMechanismName()}移除）`
       };
     } catch (err) {
       state.autoStartFeedback = {

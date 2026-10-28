@@ -39,6 +39,8 @@ import { getAppMetadata, checkReleaseUpdate, performReleaseUpdate } from './upda
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT = path.resolve(__dirname, '..');
+// 数据目录（窗口命令等运行时文件放这里，避免写进 .app 包内）
+const DATA_HOME = process.env.QUICKMEMO_HOME ? path.resolve(process.env.QUICKMEMO_HOME) : ROOT;
 
 // 确保图标存在（供 Tauri 打包使用）
 export function ensureTauriIcons() {
@@ -360,7 +362,7 @@ export function startStandaloneServer(port = 1420, openWindow = false) {
         }
         if (url.pathname === '/api/window-cmd' && req.method === 'POST') {
           const body = await readJsonBody(req);
-          const cmdFile = path.join(ROOT, '.window-cmd.json');
+          const cmdFile = path.join(DATA_HOME, '.window-cmd.json');
           fs.writeFileSync(cmdFile, JSON.stringify({ cmd: body.cmd, time: Date.now() }), 'utf-8');
           return sendJson(res, 200, { ok: true });
         }
